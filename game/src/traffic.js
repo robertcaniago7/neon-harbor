@@ -1,167 +1,142 @@
-// Traffic cars and pedestrians: kinematic waypoint followers on the road graph.
-// No physics bodies — they are cheap state machines that look alive.
+// Neon Harbor 3D — parked cars + moving traffic on the road graph.
+// Traffic cars are kinematic waypoint followers (no physics bodies).
 
-import * as THREE from 'three';
-import { CAR_MODELS } from './config.js';
+import * as THREE from '../vendor/three.module.min.js';
+import { CONFIG } from './config.js';
 import { makeRng } from './random.js';
-import { buildTrafficCar } from './vehicle3d.js';
-import { buildCharacter } from './character.js';
+import { buildCarMesh } from './vehicle3d.js';
+import { nodeId, nodePos, nodeIJ, nearestNode } from './city.js';
 
-function edgeLen(e) {
-  return Math.hypot(e.bx - e.ax, e.bz - e.az);
+const W = CONFIG.world;
+
+/** Pick a weighted-random car model from the spec list. */
+function pickModel(rng) {
+  const pairs = CONFIG.carModels.map((m) => [m, m.weight]);
+  return rng.weighted(pairs);
 }
 
-function edgeDir(e) {
-  const l = edgeLen(e);
-  return { dx: (e.bx - e.ax) / l, dz: (e.bz - e.az) / l, len: l };
+/** A point on a road edge, offset into a lane (+/- laneOffset). */
+function edgePoint(a, b, f, lane) {
+  const ax = W.roadX[a.ix];
+  const az = W.roadZ[a.iz];
+  const bx = W.roadX[b.ix];
+  const bz = W.roadZ[b.iz];
+  const x = ax + (bx - ax) * f;
+  const z = az + (bz - az) * f;
+  // lane offset perpendicular to travel
+  const dx = bx - ax;
+  const dz = bz - az;
+  const len = Math.hypot(dx, dz) || 1;
+  const px = -dz / len;
+  const pz = dx / len;
+  return { x: x + px * lane, z: z + pz * lane, heading: Math.atan2(dx, dz) };
 }
 
-/** Point on an edge at distance s, offset to the right of travel (dir +1 = a->b). */
-export function edgePoint(e, s, dir, lane) {
-  const d = edgeDir(e);
-  const px = e.ax + d.dx * s;
-  const pz = e.az + d.dz * s;
-  // right of travel direction (facing (dx,dz), right is (-dz, dx))
-  const rx = -d.dz * dir;
-  const rz = d.dx * dir;
-  // rotation.y that points the model's nose (-Z local) along the travel direction
-  const heading = Math.atan2(-d.dx * dir, -d.dz * dir);
-  return { x: px + rx * lane, z: pz + rz * lane, heading };
-}
-
-function randomEdge(rng, graph, near, radius) {
-  const edges = graph.edges.filter((e) => {
-    if (!near) return true;
-    const mx = (e.ax + e.bx) / 2;
-    const mz = (e.az + e.bz) / 2;
-    return Math.hypot(mx - near.x, mz - near.z) < radius;
-  });
-  return edges.length ? rng.pick(edges) : rng.pick(graph.edges);
-}
-
-function nextEdge(rng, graph, edge, nodeX, nodeZ) {
-  const outs = graph.edges.filter((e) =>
-    (e.ax === nodeX && e.az === nodeZ) || (e.bx === nodeX && e.bz === nodeZ));
-  if (!outs.length) return null;
-  // avoid immediate U-turn when possible
-  const forward = outs.filter((e) => !(e.ax === edge.bx && e.az === edge.bz && e.bx === edge.ax && e.bz === edge.az)
-    && !(e.ax === edge.ax && e.az === edge.az && e.bx === edge.bx && e.bz === edge.bz));
-  return rng.pick(forward.length ? forward : outs);
-}
-
-export function createTraffic(city, scene, count, seed) {
+/** Create parked cars (10) and moving traffic (16). Returns the traffic state. */
+export function createTraffic(game, seed = 7) {
   const rng = makeRng(seed);
-  const cars = [];
-  for (let i = 0; i < count; i++) {
-    const model = rng.pick(CAR_MODELS);
-    const mesh = buildTrafficCar(model.color, { taxi: model.name === 'Neon Taxi' });
-    scene.add(mesh);
-    const edge = randomEdge(rng, city.roadGraph);
-    const dir = rng.chance(0.5) ? 1 : -1;
-    cars.push({
-      mesh, model, edge, dir,
-      s: rng.range(0, edgeLen(edge)),
-      speed: rng.range(7, 11),
-      targetSpeed: rng.range(7, 11),
-      stuck: 0,
-    });
+  const { graph } = game.city;
+  const parked = [];
+  const moving = [];
+
+  // ---- parked cars: along road edges, in a lane, facing the road ----
+  for (let i = 0; i < CONFIG.counts.parked; i++) {
+    const model = pickModel(rng);
+    const horizontal = rng.chance(0.5);
+    let x;
+    let z;
+    let heading;
+    if (horizontal) {
+      const rz = rng.pick(W.roadZ);
+      const rx = rng.pick(W.roadX);
+      x = rx + rng.range(-30, 30);
+      z = rz + (rng.chance(0.5) ? 1 : -1) * (W.roadWidth / 2 - 1.2);
+      heading = rng.chance(0.5) ? Math.PI / 2 : -Math.PI / 2;
+    } else {
+      const rx = rng.pick(W.roadX);
+      const rz = rng.pick(W.roadZ);
+      x = rx + (rng.chance(0.5) ? 1 : -1) * (W.roadWidth / 2 - 1.2);
+      z = rz + rng.range(-30, 30);
+      heading = rng.chance(0.5) ? 0 : Math.PI;
+    }
+    const mesh = buildCarMesh(model, { taxi: model.name === 'Neon Taxi' });
+    mesh.position.set(x, 0, z);
+    mesh.rotation.y = heading;
+    game.scene.add(mesh);
+    parked.push({ model, mesh, x, z, heading, stolen: false });
   }
-  return { cars, rng };
+
+  // ---- moving traffic: waypoint followers on the road graph ----
+  for (let i = 0; i < CONFIG.counts.traffic; i++) {
+    const model = pickModel(rng);
+    const start = nearestNode(rng.range(W.xMin, W.xMax), rng.range(W.zMin, W.zMax));
+    const mesh = buildCarMesh(model, { taxi: model.name === 'Neon Taxi' });
+    game.scene.add(mesh);
+    const car = {
+      model,
+      mesh,
+      node: start.id,
+      next: null,
+      f: 0,
+      speed: rng.range(6, 11) * model.speed,
+      lane: rng.chance(0.5) ? W.laneOffset : -W.laneOffset,
+      wait: 0,
+    };
+    // pick a first neighbour
+    const nbs = graph.neighbours.get(car.node) ?? [];
+    car.next = nbs.length > 0 ? rng.pick(nbs) : car.node;
+    moving.push(car);
+  }
+  return { parked, moving, rng };
 }
 
-export function stepTraffic(traffic, city, dt, playerPos) {
-  const { cars, rng } = traffic;
-  for (const car of cars) {
-    // slow for the car ahead on the same edge
-    let want = car.targetSpeed;
-    for (const other of cars) {
-      if (other === car || other.edge !== car.edge || other.dir !== car.dir) continue;
-      const ahead = (other.s - car.s) * car.dir;
-      if (ahead > 0 && ahead < 8) want = Math.min(want, 0);
-    }
-    car.speed += (want - car.speed) * Math.min(1, dt * 1.5);
-    car.s += car.speed * car.dir * dt;
-    const len = edgeLen(car.edge);
-    if (car.s >= len || car.s <= 0) {
-      const nodeX = car.s >= len ? car.edge.bx : car.edge.ax;
-      const nodeZ = car.s >= len ? car.edge.bz : car.edge.az;
-      const next = nextEdge(rng, city.roadGraph, car.edge, nodeX, nodeZ);
-      if (!next) {
-        car.dir *= -1;
-        car.s = Math.max(0, Math.min(len, car.s));
-      } else {
-        const atB = next.ax === nodeX && next.az === nodeZ;
-        car.edge = next;
-        car.dir = atB ? 1 : -1;
-        car.s = atB ? 0 : edgeLen(next);
-      }
-    }
-    const p = edgePoint(car.edge, Math.max(0, Math.min(edgeLen(car.edge), car.s)), car.dir, 2.2);
-    car.mesh.position.set(p.x, 0, p.z);
-    car.mesh.rotation.y = p.heading;
-    // respawn far cars near the player so the streets stay alive
-    if (playerPos && Math.hypot(p.x - playerPos.x, p.z - playerPos.z) > 170) {
-      const edge = randomEdge(rng, city.roadGraph, playerPos, 130);
-      car.edge = edge;
-      car.dir = rng.chance(0.5) ? 1 : -1;
-      car.s = rng.range(0, edgeLen(edge));
-    }
-  }
-}
-
-export function createPeds(city, scene, count, seed) {
-  const rng = makeRng(seed + 7);
-  const peds = [];
-  for (let i = 0; i < count; i++) {
-    const char = buildCharacter();
-    scene.add(char.group);
-    const edge = randomEdge(rng, city.roadGraph);
-    peds.push({
-      char, edge, dir: rng.chance(0.5) ? 1 : -1,
-      s: rng.range(0, edgeLen(edge)),
-      speed: rng.range(1.0, 1.6),
-      phase: rng.range(0, Math.PI * 2),
-      pause: 0,
-    });
-  }
-  return { peds, rng };
-}
-
-export function stepPeds(pedState, city, dt, playerPos) {
-  const { peds, rng } = pedState;
-  for (const ped of peds) {
-    if (ped.pause > 0) {
-      ped.pause -= dt;
-      ped.char.setWalk(ped.phase, 0);
+/** Advance traffic cars along the road graph. */
+export function updateTraffic(game, dt) {
+  const { graph } = game.city;
+  for (const car of game.traffic.moving) {
+    if (car.wait > 0) {
+      car.wait -= dt;
       continue;
     }
-    ped.s += ped.speed * ped.dir * dt;
-    ped.phase += dt * 5;
-    const len = edgeLen(ped.edge);
-    if (ped.s >= len || ped.s <= 0) {
-      const nodeX = ped.s >= len ? ped.edge.bx : ped.edge.ax;
-      const nodeZ = ped.s >= len ? ped.edge.bz : ped.edge.az;
-      const next = nextEdge(rng, city.roadGraph, ped.edge, nodeX, nodeZ);
-      if (!next) {
-        ped.dir *= -1;
-        ped.s = Math.max(0, Math.min(len, ped.s));
-      } else {
-        const atB = next.ax === nodeX && next.az === nodeZ;
-        ped.edge = next;
-        ped.dir = atB ? 1 : -1;
-        ped.s = atB ? 0 : edgeLen(next);
-      }
-      if (rng.chance(0.25)) ped.pause = rng.range(1, 4);
+    const a = nodeIJ(car.node);
+    const b = nodeIJ(car.next);
+    const ax = W.roadX[a.ix];
+    const az = W.roadZ[a.iz];
+    const bx = W.roadX[b.ix];
+    const bz = W.roadZ[b.iz];
+    const edgeLen = Math.hypot(bx - ax, bz - az) || 1;
+    car.f += (car.speed * dt) / edgeLen;
+    if (car.f >= 1) {
+      car.node = car.next;
+      car.f = 0;
+      const nbs = graph.neighbours.get(car.node) ?? [];
+      // keep going straight when possible, else turn
+      const straight = nbs.find((n) => {
+        const ij = nodeIJ(n);
+        const pa = nodeIJ(car.node);
+        return ij.ix - pa.ix === (b.ix - a.ix) && ij.iz - pa.iz === (b.iz - a.iz);
+      });
+      car.next = straight !== undefined && Math.random() < 0.75 ? straight : (nbs.length > 0 ? nbs[Math.floor(Math.random() * nbs.length)] : car.node);
+      // brief pause at some intersections
+      if (Math.random() < 0.08) car.wait = 0.6 + Math.random() * 1.2;
     }
-    const p = edgePoint(ped.edge, Math.max(0, Math.min(len, ped.s)), ped.dir, 6);
-    ped.char.group.position.set(p.x, 0, p.z);
-    ped.char.group.rotation.y = p.heading;
-    ped.char.setWalk(ped.phase, 1);
-    if (playerPos && Math.hypot(p.x - playerPos.x, p.z - playerPos.z) > 170) {
-      const edge = randomEdge(rng, city.roadGraph, playerPos, 130);
-      ped.edge = edge;
-      ped.dir = rng.chance(0.5) ? 1 : -1;
-      ped.s = rng.range(0, edgeLen(edge));
+    const p = edgePoint(a, b, Math.min(1, car.f), car.lane);
+    car.mesh.position.set(p.x, 0, p.z);
+    car.mesh.rotation.y = p.heading;
+  }
+}
+
+/** Nearest parked car within range of a point (for stealing with F). */
+export function nearestParkedCar(game, x, z, maxDist = 4) {
+  let best = null;
+  let bestD = maxDist;
+  for (const car of game.traffic.parked) {
+    if (car.stolen) continue;
+    const d = Math.hypot(car.x - x, car.z - z);
+    if (d < bestD) {
+      bestD = d;
+      best = car;
     }
   }
+  return best;
 }

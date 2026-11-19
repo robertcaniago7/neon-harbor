@@ -1,72 +1,57 @@
-// Low-poly people: boxy characters built from a few boxes, with a procedural
-// walk cycle (legs/arms swing, body bobs). No skeletal animation, no GLTF.
+// Neon Harbor 3D — builds pedestrian / player character meshes as one merged,
+// vertex-coloured mesh per person (a single draw call each).
 
-import * as THREE from 'three';
-import { box, mergeGeometries } from './merge.js';
+import * as THREE from '../vendor/three.module.min.js';
+import { boxAt, sphereAt, mergeGeometries } from './merge.js';
 
-const SKINS = [0xc68e5e, 0x8d5524, 0xe8b98a, 0x6b4226, 0xf1c27d];
-const SHIRTS = [0x3fa7d6, 0xe5534b, 0x9b7ede, 0x2f9e44, 0xf2c94c, 0xff8a5c, 0xeeeeee, 0x22303e];
-const PANTS = [0x22303e, 0x3a4a5a, 0x6b4f30, 0x4a4a4a];
-
-function part(w, h, d, color, x, y, z) {
-  const m = new THREE.Mesh(
-    new THREE.BoxGeometry(w, h, d),
-    new THREE.MeshStandardMaterial({ color, roughness: 0.9, flatShading: true }),
-  );
-  m.position.set(x, y, z);
-  m.castShadow = true;
-  return m;
+/**
+ * Build a low-poly person. Origin at ground level, facing +Z.
+ * opts: { shirt, pants, skin, hair } as hex colours, height scale (default 1.8 m).
+ * Returns a THREE.Mesh; the whole figure bobs/sways as one piece when walking.
+ */
+export function buildCharacterMesh(opts = {}) {
+  const shirt = opts.shirt ?? 0x3fa7d6;
+  const pants = opts.pants ?? 0x2f333a;
+  const skin = opts.skin ?? 0xd9a066;
+  const hair = opts.hair ?? 0x2b2118;
+  const parts = [];
+  // legs
+  parts.push(boxAt(0.2, 0.75, 0.22, -0.14, 0.375, 0, pants));
+  parts.push(boxAt(0.2, 0.75, 0.22, 0.14, 0.375, 0, pants));
+  // torso
+  parts.push(boxAt(0.62, 0.7, 0.34, 0, 1.1, 0, shirt));
+  // arms
+  parts.push(boxAt(0.16, 0.62, 0.18, -0.4, 1.05, 0, shirt));
+  parts.push(boxAt(0.16, 0.62, 0.18, 0.4, 1.05, 0, shirt));
+  // hands
+  parts.push(sphereAt(0.09, -0.4, 0.72, 0, skin, 6, 5));
+  parts.push(sphereAt(0.09, 0.4, 0.72, 0, skin, 6, 5));
+  // head + hair
+  parts.push(sphereAt(0.21, 0, 1.62, 0, skin, 10, 8));
+  parts.push(sphereAt(0.22, 0, 1.68, -0.03, hair, 10, 8));
+  // shoes
+  parts.push(boxAt(0.22, 0.1, 0.34, -0.14, 0.05, 0.04, 0x14181f));
+  parts.push(boxAt(0.22, 0.1, 0.34, 0.14, 0.05, 0.04, 0x14181f));
+  const geom = mergeGeometries(parts);
+  const mat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.8, metalness: 0.02 });
+  const mesh = new THREE.Mesh(geom, mat);
+  mesh.castShadow = true;
+  mesh.receiveShadow = true;
+  return mesh;
 }
 
-/** Build a character. Faces -Z when heading = 0 (same convention as cars). */
-export function buildCharacter(opts = {}) {
-  const skin = opts.skin ?? SKINS[Math.floor(Math.random() * SKINS.length)];
-  const shirt = opts.shirt ?? SHIRTS[Math.floor(Math.random() * SHIRTS.length)];
-  const pants = opts.pants ?? PANTS[Math.floor(Math.random() * PANTS.length)];
-  const group = new THREE.Group();
+/** Juno Voss, the player: teal jacket, dark jeans, dark hair. */
+export function buildPlayerMesh() {
+  return buildCharacterMesh({ shirt: 0x2f8f7a, pants: 0x2f333a, skin: 0xd9a066, hair: 0x1c1410 });
+}
 
-  const legL = part(0.2, 0.8, 0.22, pants, -0.13, 0.4, 0);
-  const legR = part(0.2, 0.8, 0.22, pants, 0.13, 0.4, 0);
-  legL.geometry.translate(0, -0.4, 0);
-  legR.geometry.translate(0, -0.4, 0);
-  legL.position.y = 0.8;
-  legR.position.y = 0.8;
-  // torso: body + head + hair merged into one mesh (one draw call instead of three)
-  const torso = new THREE.Mesh(
-    mergeGeometries([
-      box(0.55, 0.68, 0.3, shirt, 0, 1.14, 0),
-      box(0.32, 0.32, 0.32, skin, 0, 1.66, 0),
-      box(0.34, 0.12, 0.34, opts.hair ?? 0x1a1a1a, 0, 1.84, 0),
-    ]),
-    new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.9, flatShading: true }),
-  );
-  torso.castShadow = true;
-  const armL = part(0.16, 0.62, 0.18, shirt, -0.36, 1.42, 0);
-  const armR = part(0.16, 0.62, 0.18, shirt, 0.36, 1.42, 0);
-  armL.geometry.translate(0, -0.31, 0);
-  armR.geometry.translate(0, -0.31, 0);
-  armL.position.y = 1.42;
-  armR.position.y = 1.42;
-  // a simple gun in the right hand when armed (hidden by default)
-  const gun = part(0.08, 0.1, 0.42, 0x14161a, 0.36, 1.1, -0.2);
-  gun.visible = false;
+/** A gang member (Rust Vultures): rust-red jacket. */
+export function buildGangMesh() {
+  return buildCharacterMesh({ shirt: 0xb03a2e, pants: 0x3a3f47, skin: 0xc98d5f, hair: 0x14100c });
+}
 
-  group.add(legL, legR, torso, armL, armR, gun);
-  return {
-    group,
-    parts: { legL, legR, armL, armR, torso, gun },
-    /** Procedural walk: phase advances with distance, speed 0..1 scales the swing. */
-    setWalk(phase, amount) {
-      const s = Math.sin(phase) * 0.55 * amount;
-      legL.rotation.x = s;
-      legR.rotation.x = -s;
-      armL.rotation.x = -s * 0.8;
-      armR.rotation.x = s * 0.8;
-      torso.position.y = Math.abs(Math.cos(phase)) * 0.05 * amount;
-    },
-    setArmed(armed) {
-      gun.visible = armed;
-      armR.rotation.x = armed ? -1.2 : 0;
-    },
-  };
+/** A police foot officer: navy uniform, cap. */
+export function buildOfficerMesh() {
+  const mesh = buildCharacterMesh({ shirt: 0x22303e, pants: 0x1b2530, skin: 0xd9a066, hair: 0x22303e });
+  return mesh;
 }

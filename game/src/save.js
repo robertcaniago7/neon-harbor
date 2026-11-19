@@ -1,49 +1,83 @@
-// Save and best score in localStorage: cash, mission progress, player position and
-// health, plus the best cash ever held. Loading never throws: a bad save is ignored.
+// Neon Harbor 3D — localStorage save / load (progress, cash, best).
 
-import { SAVE_KEY, BEST_KEY } from './config.js';
+import { CONFIG } from './config.js';
 
-export function saveGame(data) {
+/** The save payload shape. */
+function emptySave() {
+  return {
+    version: 1,
+    cash: CONFIG.player.startCash,
+    health: CONFIG.player.health,
+    missionIndex: 0,
+    bestCash: 0,
+    savedAt: Date.now(),
+  };
+}
+
+/** Save the current progress. */
+export function saveGame(game) {
   try {
-    window.localStorage.setItem(SAVE_KEY, JSON.stringify(data));
-  } catch {
-    // Storage can be off (private windows): the game then lasts this visit only.
+    const data = {
+      version: 1,
+      cash: game.player.cash,
+      health: game.player.health,
+      missionIndex: game.missions.index,
+      bestCash: Math.max(game.bestCash || 0, game.player.cash),
+      savedAt: Date.now(),
+    };
+    localStorage.setItem(CONFIG.saveKey, JSON.stringify(data));
+    game.bestCash = data.bestCash;
+    return true;
+  } catch (err) {
+    console.warn('save failed', err);
+    return false;
   }
 }
 
+/** Load saved progress, or null when there is none / it is unreadable. */
 export function loadGame() {
   try {
-    const raw = window.localStorage.getItem(SAVE_KEY);
+    const raw = localStorage.getItem(CONFIG.saveKey);
     if (!raw) return null;
     const data = JSON.parse(raw);
-    if (typeof data !== 'object' || data === null) return null;
+    if (!data || data.version !== 1) return null;
     return data;
-  } catch {
+  } catch (err) {
+    console.warn('load failed', err);
     return null;
   }
 }
 
-export function clearSave() {
+/** Record the best cash total (for the title screen). */
+export function saveBest(game) {
   try {
-    window.localStorage.removeItem(SAVE_KEY);
-  } catch {
-    // Nothing to clear.
+    const best = Math.max(loadBest(), game.player.cash);
+    localStorage.setItem(CONFIG.bestKey, String(best));
+    game.bestCash = best;
+    return best;
+  } catch (err) {
+    console.warn('best save failed', err);
+    return game.player.cash;
   }
 }
 
-export function readBest() {
+/** Read the best cash total, or 0. */
+export function loadBest() {
   try {
-    return Number.parseInt(window.localStorage.getItem(BEST_KEY) ?? '0', 10) || 0;
-  } catch {
+    return Number(localStorage.getItem(CONFIG.bestKey) ?? 0) || 0;
+  } catch (err) {
     return 0;
   }
 }
 
-export function saveBest(value) {
+/** Clear the save (fresh start). */
+export function clearSave() {
   try {
-    const best = readBest();
-    if (value > best) window.localStorage.setItem(BEST_KEY, String(value));
-  } catch {
-    // Best score is a nicety, not a requirement.
+    localStorage.removeItem(CONFIG.saveKey);
+    localStorage.removeItem(CONFIG.bestKey);
+  } catch (err) {
+    console.warn('clear save failed', err);
   }
 }
+
+export { emptySave };

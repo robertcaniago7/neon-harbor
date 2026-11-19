@@ -1,144 +1,168 @@
-// HUD: DOM overlay (stars, cash, health, objective, prompt, speed) + a 2D-canvas
-// minimap drawn from the road graph. Updated every frame; minimap at 10 Hz.
+// Neon Harbor 3D — HUD DOM + 2D minimap canvas + waypoint beacon.
 
-import { WANTED } from './config.js';
+import { CONFIG } from './config.js';
+import { districtAt } from './config.js';
+import { waypointInfo } from './missions.js';
+import { clockLabel } from './daynight.js';
 
-export function createHud(city) {
+/** Wire up the HUD elements. Returns the hud state. */
+export function createHud(game) {
   const el = (id) => document.getElementById(id);
-  const starsEl = el('stars');
-  const objectiveEl = el('objective');
-  const cashEl = el('cash');
-  const healthFill = el('health-fill');
-  const armorFill = el('armor-fill');
-  const weaponEl = el('weapon');
-  const speedEl = el('speed');
-  const promptEl = el('prompt');
-  const toastEl = el('toast');
-  const crosshairEl = el('crosshair');
-  const minimap = el('minimap');
-  const mctx = minimap ? minimap.getContext('2d') : null;
-
-  let toastTimer = 0;
-  let mapTimer = 0;
-
-  function drawMinimap(ctx) {
-    if (!mctx) return;
-    const S = minimap.width;
-    const scale = S / 500;
-    const ox = S / 2;
-    const oz = S / 2;
-    const X = (x) => ox + x * scale;
-    const Z = (z) => oz + z * scale;
-    mctx.clearRect(0, 0, S, S);
-    // sea (south)
-    mctx.fillStyle = '#0e5a6e';
-    mctx.fillRect(0, Z(205), S, S - Z(205));
-    // land
-    mctx.fillStyle = '#20242c';
-    mctx.fillRect(0, 0, S, Z(205));
-    // roads
-    mctx.strokeStyle = '#5a6068';
-    mctx.lineWidth = 3;
-    for (const e of city.roadGraph.edges) {
-      mctx.beginPath();
-      mctx.moveTo(X(e.ax), Z(e.az));
-      mctx.lineTo(X(e.bx), Z(e.bz));
-      mctx.stroke();
-    }
-    // search circle while wanted
-    if (ctx.police.wanted > 0) {
-      mctx.strokeStyle = 'rgba(255,60,60,0.7)';
-      mctx.lineWidth = 1.5;
-      mctx.beginPath();
-      mctx.arc(X(ctx.player.pos.x), Z(ctx.player.pos.z), 70 * scale, 0, Math.PI * 2);
-      mctx.stroke();
-    }
-    // waypoint
-    const wp = ctx.missions.waypoint;
-    if (wp) {
-      mctx.fillStyle = '#ffd23f';
-      const x = X(wp.x);
-      const z = Z(wp.z);
-      mctx.beginPath();
-      mctx.moveTo(x, z - 6);
-      mctx.lineTo(x + 6, z);
-      mctx.lineTo(x, z + 6);
-      mctx.lineTo(x - 6, z);
-      mctx.closePath();
-      mctx.fill();
-    }
-    // police dots
-    for (const car of ctx.police.cars) {
-      mctx.fillStyle = Math.floor(performance.now() / 300) % 2 ? '#ff4444' : '#4488ff';
-      mctx.beginPath();
-      mctx.arc(X(car.mesh.position.x), Z(car.mesh.position.z), 3.5, 0, Math.PI * 2);
-      mctx.fill();
-    }
-    // player triangle (rotated to heading)
-    const px = X(ctx.player.pos.x);
-    const pz = Z(ctx.player.pos.z);
-    const h = ctx.player.heading;
-    mctx.save();
-    mctx.translate(px, pz);
-    mctx.rotate(Math.atan2(Math.sin(h), Math.cos(h)) + Math.PI);
-    mctx.fillStyle = '#ffffff';
-    mctx.strokeStyle = '#000000';
-    mctx.lineWidth = 1;
-    mctx.beginPath();
-    mctx.moveTo(0, -6);
-    mctx.lineTo(4.5, 5);
-    mctx.lineTo(-4.5, 5);
-    mctx.closePath();
-    mctx.fill();
-    mctx.stroke();
-    mctx.restore();
-  }
-
-  return {
-    toast(text) {
-      if (!toastEl) return;
-      toastEl.textContent = text;
-      toastEl.style.opacity = '1';
-      toastTimer = 3;
-    },
-    update(ctx, dt) {
-      if (toastTimer > 0) {
-        toastTimer -= dt;
-        if (toastTimer <= 0 && toastEl) toastEl.style.opacity = '0';
-      }
-      // stars
-      if (starsEl) {
-        let s = '';
-        for (let i = 1; i <= WANTED.max; i++) s += i <= ctx.police.wanted ? '★' : '☆';
-        starsEl.textContent = s;
-        starsEl.classList.toggle('cooling', ctx.police.losTimer > 0 && ctx.police.wanted > 0);
-        const known = [];
-        if (ctx.police.knownCar) known.push('CAR KNOWN');
-        if (ctx.police.knownOutfit) known.push('OUTFIT KNOWN');
-        starsEl.title = known.join(' · ') || 'Clean';
-      }
-      if (objectiveEl) objectiveEl.textContent = ctx.objectiveText();
-      if (cashEl) cashEl.textContent = '$' + Math.floor(ctx.player.cash);
-      if (healthFill) healthFill.style.width = Math.max(0, ctx.player.health) + '%';
-      if (armorFill) armorFill.style.width = Math.max(0, ctx.player.armor) + '%';
-      if (weaponEl) {
-        const w = ctx.player.weapon === 'pistol' ? `HK-9 · ${ctx.player.ammo}` : 'Fists';
-        weaponEl.textContent = w;
-      }
-      if (speedEl) {
-        speedEl.textContent = ctx.playerCar
-          ? Math.round(Math.abs(ctx.playerCar.state.speed) * 3.6) + ' km/h'
-          : '';
-      }
-      if (promptEl) promptEl.textContent = ctx.promptText || '';
-      if (crosshairEl) {
-        crosshairEl.style.display = ctx.player.weapon === 'pistol' && !ctx.playerCar ? 'block' : 'none';
-      }
-      mapTimer -= dt;
-      if (mapTimer <= 0) {
-        mapTimer = 0.1;
-        drawMinimap(ctx);
-      }
-    },
+  const hud = {
+    cash: el('hud-cash'),
+    health: el('hud-health'),
+    armor: el('hud-armor'),
+    weapon: el('hud-weapon'),
+    speed: el('hud-speed'),
+    stars: el('hud-stars'),
+    objective: el('hud-objective'),
+    clock: el('hud-clock-time'),
+    district: el('hud-district'),
+    damage: el('damage-flash'),
+    minimap: el('minimap'),
+    toast: el('hud-toast'),
+    toastTimer: 0,
   };
+  if (hud.minimap) {
+    hud.mapCtx = hud.minimap.getContext('2d');
+  }
+  return hud;
+}
+
+/** Flash the red damage vignette. */
+export function flashDamage(game) {
+  const h = game.hud;
+  if (!h.damage) return;
+  h.damage.style.opacity = '0.55';
+  setTimeout(() => { h.damage.style.opacity = '0'; }, 180);
+}
+
+/** Flash the wanted stars (when the level changes). */
+export function flashWanted(game) {
+  const h = game.hud;
+  if (!h.stars) return;
+  h.stars.style.transform = 'scale(1.25)';
+  setTimeout(() => { h.stars.style.transform = 'scale(1)'; }, 160);
+}
+
+/** Show a one-line objective / toast message. */
+export function showObjective(game, text) {
+  const h = game.hud;
+  if (h.objective) h.objective.textContent = text;
+  if (h.toast) {
+    h.toast.textContent = text;
+    h.toast.style.opacity = '1';
+    h.toastTimer = 4;
+  }
+}
+
+/** District name for the player's current block. */
+function currentDistrict(game) {
+  const x = game.player.pos.x;
+  const z = game.player.pos.z;
+  const col = Math.max(0, Math.min(8, Math.round((x + 200) / 50)));
+  const row = Math.max(0, Math.min(6, Math.round((z + 150) / 50)));
+  if (z >= 180) return 'Palma Beach';
+  return districtAt(col, row);
+}
+
+/** Draw the 2D minimap: roads, sea, player, cars, waypoint. */
+function drawMinimap(game) {
+  const h = game.hud;
+  if (!h.mapCtx || !h.minimap) return;
+  const ctx = h.mapCtx;
+  const S = h.minimap.width;
+  const W = CONFIG.world;
+  const toMap = (x, z) => [
+    ((x - W.xMin) / (W.xMax - W.xMin)) * S,
+    ((z - W.zMin) / (W.zMax - W.zMin)) * S,
+  ];
+  ctx.clearRect(0, 0, S, S);
+  ctx.fillStyle = 'rgba(20, 28, 40, 0.85)';
+  ctx.fillRect(0, 0, S, S);
+  // sea (south)
+  const [, seaY] = toMap(0, W.beachZ0);
+  ctx.fillStyle = '#0e3a5a';
+  ctx.fillRect(0, seaY, S, S - seaY);
+  // roads
+  ctx.strokeStyle = '#6b7280';
+  ctx.lineWidth = 2;
+  for (const x of W.roadX) {
+    const [mx] = toMap(x, 0);
+    ctx.beginPath(); ctx.moveTo(mx, 0); ctx.lineTo(mx, S); ctx.stroke();
+  }
+  for (const z of W.roadZ) {
+    const [, mz] = toMap(0, z);
+    ctx.beginPath(); ctx.moveTo(0, mz); ctx.lineTo(S, mz); ctx.stroke();
+  }
+  // waypoint beacon
+  const wp = waypointInfo(game);
+  if (wp) {
+    const [wx, wz] = toMap(wp.x, wp.z);
+    ctx.fillStyle = '#ffd23f';
+    ctx.beginPath(); ctx.arc(wx, wz, 5, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = '#ffd23f';
+    ctx.beginPath(); ctx.arc(wx, wz, 9 + Math.sin(game.elapsed * 4) * 3, 0, Math.PI * 2); ctx.stroke();
+  }
+  // traffic cars
+  ctx.fillStyle = '#9aa0a8';
+  for (const car of game.traffic.moving) {
+    const [mx, mz] = toMap(car.mesh.position.x, car.mesh.position.z);
+    ctx.fillRect(mx - 1.5, mz - 1.5, 3, 3);
+  }
+  // police cars
+  ctx.fillStyle = '#3fa7d6';
+  for (const car of game.police.cars) {
+    const [mx, mz] = toMap(car.mesh.position.x, car.mesh.position.z);
+    ctx.beginPath(); ctx.arc(mx, mz, 3, 0, Math.PI * 2); ctx.fill();
+  }
+  // player (centre arrow)
+  const [px, pz] = toMap(game.player.pos.x, game.player.pos.z);
+  ctx.fillStyle = '#ff2d95';
+  ctx.beginPath(); ctx.arc(px, pz, 4, 0, Math.PI * 2); ctx.fill();
+  ctx.strokeStyle = '#ffffff';
+  ctx.lineWidth = 1.5;
+  ctx.beginPath(); ctx.arc(px, pz, 6, 0, Math.PI * 2); ctx.stroke();
+  // north indicator
+  ctx.fillStyle = '#ffffff';
+  ctx.font = 'bold 10px sans-serif';
+  ctx.fillText('N', 4, 12);
+}
+
+/** Update every HUD field from the game state. Call once per frame. */
+export function updateHud(game, dt) {
+  const h = game.hud;
+  const p = game.player;
+  if (h.cash) h.cash.textContent = `$${p.cash}`;
+  if (h.health) {
+    h.health.textContent = `${Math.max(0, Math.round(p.health))}`;
+    h.health.style.color = p.health < 30 ? '#ff5a5a' : '#ffffff';
+  }
+  if (h.armor) h.armor.textContent = `${Math.max(0, Math.round(p.armor))}`;
+  if (h.weapon) {
+    h.weapon.textContent = p.inCar ? 'Driving' : p.weapon === 'pistol' ? `HK-9 · ${p.ammo}` : 'Fists';
+  }
+  if (h.speed) {
+    const v = game.playerCar ? game.playerCar.vehicle.chassisBody.velocity.length() : 0;
+    h.speed.textContent = p.inCar ? `${Math.round(v * 3.6)} km/h` : '';
+  }
+  if (h.stars) {
+    const n = game.police.wanted;
+    h.stars.textContent = '★'.repeat(n) + '☆'.repeat(5 - n);
+    h.stars.style.color = n > 0 ? '#ffcf3f' : 'rgba(255,255,255,0.35)';
+  }
+  if (h.clock) h.clock.textContent = clockLabel(game.time);
+  if (h.district) h.district.textContent = currentDistrict(game);
+  if (h.toast && h.toastTimer > 0) {
+    h.toastTimer -= dt;
+    if (h.toastTimer <= 0) h.toast.style.opacity = '0';
+  }
+  drawMinimap(game);
+}
+
+// Re-export the helpers under the hud object for game code that calls game.hud.*.
+export function bindHudHelpers(game) {
+  game.hud.flashDamage = () => flashDamage(game);
+  game.hud.flashWanted = () => flashWanted(game);
+  game.hud.showObjective = (text) => showObjective(game, text);
 }

@@ -1,82 +1,92 @@
-// Day/night cycle: one directional sun (+ shadow), hemisphere light, and a
-// night factor that drives sky/fog colour, neon glow and streetlight lamps.
+// Neon Harbor 3D — sun/moon, sky colour, fog, streetlight/neon intensity by time.
+// Time t in [0,1): 0 = midnight, 0.25 = dawn, 0.5 = noon, 0.75 = dusk.
+// Day length 480 s; start time 0.72 (golden hour).
 
-import * as THREE from 'three';
-import { DAY_LENGTH, PALETTE } from './config.js';
+import * as THREE from '../vendor/three.module.min.js';
+import { CONFIG } from './config.js';
 
-const DAY_SKY = new THREE.Color(PALETTE.daySky);
-const DUSK_SKY = new THREE.Color(PALETTE.duskSky);
-const NIGHT_SKY = new THREE.Color(PALETTE.nightSky);
-const DAY_FOG = new THREE.Color(PALETTE.dayFog);
-const NIGHT_FOG = new THREE.Color(PALETTE.nightFog);
-const DAY_SEA = new THREE.Color(PALETTE.seaDay);
-const NIGHT_SEA = new THREE.Color(PALETTE.seaNight);
+const P = CONFIG.palette;
 
-function smoothstep(a, b, x) {
-  const t = Math.min(1, Math.max(0, (x - a) / (b - a)));
-  return t * t * (3 - 2 * t);
-}
-
-export function createDayNight(scene, quality) {
-  const sun = new THREE.DirectionalLight(0xfff1d6, 2.2);
+/** Create the sun (directional, with shadows), moon/ambient and sky. */
+export function createSky(scene) {
+  const sun = new THREE.DirectionalLight(P.sunDay, 2.2);
+  sun.position.set(120, 180, 60);
   sun.castShadow = true;
-  const shadowSize = quality.shadows;
-  sun.shadow.mapSize.set(shadowSize, shadowSize);
-  sun.shadow.camera.left = -90;
-  sun.shadow.camera.right = 90;
-  sun.shadow.camera.top = 90;
-  sun.shadow.camera.bottom = -90;
-  sun.shadow.camera.near = 1;
-  sun.shadow.camera.far = 400;
-  sun.shadow.bias = -0.0005;
+  sun.shadow.mapSize.set(2048, 2048);
+  sun.shadow.camera.left = -260;
+  sun.shadow.camera.right = 260;
+  sun.shadow.camera.top = 260;
+  sun.shadow.camera.bottom = -260;
+  sun.shadow.camera.far = 700;
+  sun.shadow.bias = -0.0004;
   scene.add(sun);
   scene.add(sun.target);
 
-  const hemi = new THREE.HemisphereLight(0xbfd9ff, 0x8a7a5a, 0.9);
+  const hemi = new THREE.HemisphereLight(0xbfd9ff, 0x5a4a3a, 0.9);
   scene.add(hemi);
-  scene.fog = new THREE.Fog(PALETTE.dayFog, 60, quality.fogFar);
-  scene.background = new THREE.Color(PALETTE.daySky);
 
-  return {
-    sun, hemi,
-    /** t in [0,1): 0 midnight, 0.25 dawn, 0.5 noon, 0.75 dusk. Returns night factor 0..1. */
-    update(t, focus) {
-      const ang = (t - 0.25) * Math.PI * 2; // 0 at dawn, PI at dusk
-      const elev = Math.sin(ang); // -1 night .. 1 noon
-      const dayFactor = smoothstep(-0.08, 0.25, elev);
-      const duskFactor = Math.exp(-Math.pow((Math.abs(elev) - 0.12) * 6, 2));
-      const nightFactor = 1 - dayFactor;
+  const moon = new THREE.DirectionalLight(0x8fa8ff, 0.0);
+  moon.position.set(-120, 160, -80);
+  scene.add(moon);
 
-      // sun position orbits; at night it becomes a dim moon from the opposite side
-      const az = ang;
-      const dist = 260;
-      if (elev >= 0) {
-        sun.position.set(Math.cos(az) * dist, Math.max(20, elev * 220), Math.sin(az) * dist * 0.6);
-        sun.color.setHex(0xfff1d6).lerp(new THREE.Color(0xff8a4d), duskFactor * 0.8);
-        sun.intensity = 0.6 + 1.8 * dayFactor;
-      } else {
-        sun.position.set(-Math.cos(az) * dist, Math.max(30, -elev * 160), -Math.sin(az) * dist * 0.6);
-        sun.color.setHex(0x8fa8ff);
-        sun.intensity = 0.55;
-      }
-      sun.target.position.copy(focus);
-      sun.position.add(focus);
-      sun.target.updateMatrixWorld();
+  scene.background = new THREE.Color(P.skyDay);
+  scene.fog = new THREE.Fog(P.fogDay, 60, 420);
+  return { sun, hemi, moon };
+}
 
-      hemi.intensity = 0.4 + 0.6 * dayFactor;
-      hemi.color.setHex(0xbfd9ff).lerp(new THREE.Color(0x2a3560), nightFactor * 0.8);
-      hemi.groundColor.setHex(0x8a7a5a).lerp(new THREE.Color(0x1a1a2a), nightFactor);
+/** Blend of day/dusk/night for a time t: returns { day, dusk, night } weights. */
+export function lightWeights(t) {
+  // day peaks at noon (0.5), dusk peaks at 0.75, night peaks at 0 / 1.
+  const dayW = Math.max(0, 1 - Math.abs(t - 0.5) / 0.28);
+  const duskW = Math.max(0, 1 - Math.abs(t - 0.75) / 0.14) + Math.max(0, 1 - Math.abs(t - 0.25) / 0.1);
+  const nightW = Math.max(0, 1 - Math.min(Math.abs(t), Math.abs(t - 1)) / 0.18);
+  const sum = dayW + duskW + nightW || 1;
+  return { day: dayW / sum, dusk: duskW / sum, night: nightW / sum };
+}
 
-      const sky = new THREE.Color(DAY_SKY).lerp(NIGHT_SKY, nightFactor);
-      sky.lerp(DUSK_SKY, duskFactor * 0.7);
-      scene.background.copy(sky);
-      const fog = new THREE.Color(DAY_FOG).lerp(NIGHT_FOG, nightFactor);
-      fog.lerp(DUSK_SKY, duskFactor * 0.4);
-      scene.fog.color.copy(fog);
-      return { nightFactor, dayFactor, duskFactor };
-    },
-    setSeaColor(seaMat, nightFactor) {
-      seaMat.color.copy(DAY_SEA).lerp(NIGHT_SEA, nightFactor);
-    },
-  };
+function lerpColor(a, b, f) {
+  const ca = new THREE.Color(a);
+  const cb = new THREE.Color(b);
+  return ca.lerp(cb, f);
+}
+
+/** Update sun/moon/sky/fog/window colours for the game's current time. */
+export function updateDayNight(game, dt) {
+  const t = game.time;
+  const w = lightWeights(t);
+  const { sun, hemi, moon } = game.sky;
+  // sun angle: rises in the east, sets in the west across the day
+  const ang = (t - 0.25) * Math.PI * 2;
+  const sunH = Math.sin(ang);
+  sun.position.set(Math.cos(ang) * 220, Math.max(20, sunH * 200), 90);
+  sun.intensity = 0.25 + w.day * 2.0 + w.dusk * 1.1;
+  sun.color.copy(lerpColor(P.sunNight, P.sunDay, w.day)).lerp(lerpColor(P.sunDay, P.sunDusk, 1), w.dusk * 0.7);
+  moon.intensity = w.night * 0.7;
+  hemi.intensity = 0.25 + w.day * 0.65 + w.dusk * 0.35;
+  // sky + fog
+  const sky = lerpColor(P.skyNight, P.skyDay, w.day);
+  sky.lerp(new THREE.Color(P.skyDusk), w.dusk * 0.85);
+  game.scene.background.copy(sky);
+  const fog = lerpColor(P.fogNight, P.fogDay, w.day);
+  fog.lerp(new THREE.Color(P.skyDusk), w.dusk * 0.5);
+  game.scene.fog.color.copy(fog);
+  // windows: dark by day, warm by night
+  if (game.city.windowMat) {
+    game.city.windowMat.color.copy(lerpColor(P.windowDay, P.windowNight, w.night + w.dusk * 0.4));
+  }
+  // sea colour
+  if (game.city.seaMat) {
+    game.city.seaMat.color.copy(lerpColor(P.seaNight, P.seaDay, w.day + w.dusk * 0.35));
+  }
+  // advance the clock (paused on the title screen)
+  if (!game.paused && game.state === 'playing') {
+    game.time = (game.time + dt / CONFIG.day.lengthSec) % 1;
+  }
+}
+
+/** Human-readable time of day (for the HUD). */
+export function clockLabel(t) {
+  const hours = Math.floor(t * 24);
+  const mins = Math.floor((t * 24 - hours) * 60);
+  return `${String(hours).padStart(2, '0')}:${String(mins).padStart(2, '0')}`;
 }

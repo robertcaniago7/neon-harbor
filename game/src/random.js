@@ -1,5 +1,6 @@
-// Seeded RNG (mulberry32) so the city is the same on every visit for a given seed.
+// Neon Harbor 3D — seeded RNG (mulberry32) so screenshots and layouts are reproducible.
 
+/** A small fast seeded PRNG. Returns a function that yields [0, 1). */
 export function mulberry32(seed) {
   let a = seed >>> 0;
   return function () {
@@ -11,21 +12,37 @@ export function mulberry32(seed) {
   };
 }
 
+/** A small helper object around a seeded RNG. */
 export function makeRng(seed) {
-  const rand = mulberry32(seed);
+  const next = mulberry32(seed);
   return {
-    rand,
+    next,
+    /** Float in [min, max). */
     range(min, max) {
-      return min + rand() * (max - min);
+      return min + next() * (max - min);
     },
+    /** Integer in [min, max] inclusive. */
     int(min, max) {
-      return Math.floor(min + rand() * (max - min + 1));
+      return min + Math.floor(next() * (max - min + 1));
     },
+    /** Pick one element of an array. */
     pick(arr) {
-      return arr[Math.floor(rand() * arr.length)];
+      return arr[Math.floor(next() * arr.length)];
     },
+    /** Weighted pick from [{value, weight}] or a list of [value, weight] pairs. */
+    weighted(pairs) {
+      let total = 0;
+      for (const [, w] of pairs) total += w;
+      let roll = next() * total;
+      for (const [v, w] of pairs) {
+        roll -= w;
+        if (roll <= 0) return v;
+      }
+      return pairs[pairs.length - 1][0];
+    },
+    /** True with probability p. */
     chance(p) {
-      return rand() < p;
+      return next() < p;
     },
   };
 }
