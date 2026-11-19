@@ -1,141 +1,68 @@
-// The screenshot scenes behind ?shot=cover|city|mission|combat. Each one plays the real
-// rules forward from a fresh world for a fixed number of steps, steered by a simple
-// autopilot, so the frame is what a short game really looks like and the same seed
-// always gives the same frame.
+// Screenshot staging for shots.json: arrange a real game state for each named shot.
+// The caller then runs a couple of seconds of simulation so physics and police settle,
+// renders one frame, and sets window.__shotReady.
 
-import { STEP } from './config.js';
-import { SCREEN_PLAY } from './render.js';
-import {
-  resetWorld, stepWorld, spawnParkedCar, spawnPoliceCar, spawnEnemy, playerPos,
-} from './world.js';
-import { giveWeapon } from './player.js';
+import { addWanted } from './police.js';
+import { spawnEnemies } from './combat.js';
+import { startMission } from './missions.js';
 
-const COVER_SECONDS = 9;
-const CITY_SECONDS = 8;
-const MISSION_SECONDS = 6;
-const COMBAT_SECONDS = 5;
+export const SHOT_NAMES = ['cover', 'city', 'mission', 'combat'];
 
-/** Silent audio stand-in: screenshots never need sound. */
-const SILENT = {
-  shoot() {}, crash() {}, explosion() {}, pickup() {}, cash() {},
-  missionDone() {}, missionStart() {}, wantedUp() {}, busted() {},
-  engine() {}, siren() {}, music() {},
-};
-
-function angleDiff(a, b) {
-  let d = a - b;
-  while (d > Math.PI) d -= Math.PI * 2;
-  while (d < -Math.PI) d += Math.PI * 2;
-  return d;
-}
-
-function heldInput(up, down, left, right) {
-  return { up, down, left, right, sprint: false, brake: false };
-}
-
-/** Drive down the road ahead: throttle on, steer at the next intersection. */
-function driveAutopilot(world) {
-  const car = world.player.inCar;
-  if (!car) return heldInput(false, false, false, false);
-  const node = world.city.nearestRoadPoint(car.x + Math.cos(car.angle) * 260, car.y + Math.sin(car.angle) * 260);
-  const want = Math.atan2(node.y - car.y, node.x - car.x);
-  const diff = angleDiff(want, car.angle);
-  return heldInput(true, false, diff < -0.08, diff > 0.08);
-}
-
-/** Walk toward the road ahead. */
-function walkAutopilot(world) {
-  const p = world.player;
-  const node = world.city.nearestRoadPoint(p.x + 200, p.y + 60);
-  const want = Math.atan2(node.y - p.y, node.x - p.x);
-  return heldInput(Math.sin(want) < -0.3, Math.sin(want) > 0.3, Math.cos(want) < -0.3, Math.cos(want) > 0.3);
-}
-
-function stepFor(world, seconds, pilot, mouseDown) {
-  const input = {
-    held: heldInput(false, false, false, false),
-    mouse: { down: false, x: 0, y: 0 },
-    punch: false,
-    mouseWorldX: 0,
-    mouseWorldY: 0,
-  };
-  for (let i = 0; i < seconds / STEP; i += 1) {
-    input.held = pilot(world, i);
-    const pos = playerPos(world);
-    input.mouse.down = !!mouseDown;
-    input.mouseWorldX = pos.x + 200;
-    input.mouseWorldY = pos.y;
-    stepWorld(world, input, SILENT, STEP);
+export function stageShot(ctx, name) {
+  ctx.shotMode = true;
+  const P = ctx.player;
+  if (name === 'cover') {
+    // Golden-hour downtown: Juno in a Sunset Cruiser, Harbor PD closing in.
+    // The car drives during the settle (shotDrive) so the cover shows it moving.
+    ctx.dayT = 0.7;
+    const car = ctx.spawnParkedCar('Sunset Cruiser', 25, 25, -Math.PI / 2);
+    ctx.enterCar(car); // stealing adds 1 star; top up to 3
+    addWanted(ctx.police, 2, { car: { model: 'Sunset Cruiser', color: 0xff8a5c } });
+    ctx.camYaw = -Math.PI / 2;
+    ctx.camPitch = 0.28;
+    ctx.camDist = 13;
+    ctx.shotDrive = true;
+  } else if (name === 'city') {
+    // Afternoon on the beach road, looking north at the Downtown skyline.
+    ctx.dayT = 0.45;
+    P.pos.set(-25, 0, 175);
+    P.heading = 0;
+    P.char.group.position.copy(P.pos);
+    P.char.group.rotation.y = 0;
+    ctx.camYaw = 0;
+    ctx.camPitch = 0.32;
+    ctx.camDist = 12;
+  } else if (name === 'mission') {
+    // Golden hour on the harbour road: Vultures hold the corner ahead, Juno walks in.
+    ctx.dayT = 0.72;
+    ctx.missions.index = 2; // Dockside Trouble
+    startMission(ctx.missions, ctx);
+    P.pos.set(225, 0, 168);
+    P.heading = Math.PI; // face south down the road toward the docks
+    P.char.group.position.copy(P.pos);
+    P.char.group.rotation.y = P.heading;
+    spawnEnemies(ctx.combat, 225, 175, 4, 'vulture');
+    addWanted(ctx.police, 1);
+    ctx.camYaw = P.heading;
+    ctx.camPitch = 0.3;
+    ctx.camDist = 12;
+  } else if (name === 'combat') {
+    // Night in The Yards: pistol out, three Vultures ahead, heat at 2 stars.
+    ctx.dayT = 0.02;
+    ctx.missions.index = 4; // Payback
+    startMission(ctx.missions, ctx);
+    P.pos.set(163, 0, -63);
+    P.heading = Math.atan2(-(175 - 163), -(-75 + 63));
+    P.char.group.position.copy(P.pos);
+    P.char.group.rotation.y = P.heading;
+    P.ownsPistol = true;
+    P.weapon = 'pistol';
+    P.ammo = 24;
+    P.char.setArmed(true);
+    spawnEnemies(ctx.combat, 175, -75, 3, 'vulture');
+    addWanted(ctx.police, 2);
+    ctx.camYaw = P.heading;
+    ctx.camPitch = 0.25;
+    ctx.camDist = 10;
   }
-}
-
-/**
- * Set `world` to the named scene (cover, city, mission or combat) and return the
- * screen to draw over it and the best cash to show.
- */
-export function stageShot(name, world) {
-  resetWorld(world);
-
-  if (name === 'city') {
-    world.player.x = 1500;
-    world.player.y = 200;
-    stepFor(world, CITY_SECONDS, walkAutopilot, false);
-    return { screen: SCREEN_PLAY, best: 0 };
-  }
-  if (name === 'mission') {
-    // On the road x=2400 down by the docks, facing the Vultures up the same road.
-    world.player.x = 2400;
-    world.player.y = 1700;
-    giveWeapon(world.player, 'pistol', 24);
-    world.mission.index = 2;
-    world.mission.active = true;
-    world.mission.step = 1;
-    world.mission.kills = 0;
-    world.mission.banner = 'Kestrel: "Vultures are shaking down my dock crew. Handle it."';
-    world.mission.bannerTime = 6;
-    for (const [ex, ey] of [[2400, 1800], [2380, 1860], [2420, 1920], [2400, 1980]]) {
-      spawnEnemy(world, ex, ey);
-    }
-    stepFor(world, MISSION_SECONDS, (_w, i) => (i < 120 ? heldInput(false, true, false, false) : heldInput(false, false, false, false)), false);
-    return { screen: SCREEN_PLAY, best: 650 };
-  }
-  if (name === 'combat') {
-    // A shootout on the same dock road: the player holds the line and fires north.
-    world.player.x = 2400;
-    world.player.y = 1850;
-    giveWeapon(world.player, 'pistol', 24);
-    for (const [ex, ey] of [[2400, 1750], [2380, 1700], [2420, 1650]]) {
-      spawnEnemy(world, ex, ey);
-    }
-    spawnPoliceCar(world);
-    world.wanted = 2;
-    const input = {
-      held: heldInput(false, false, false, false),
-      mouse: { down: true, x: 0, y: 0 },
-      punch: false,
-      mouseWorldX: 2400,
-      mouseWorldY: 1700,
-    };
-    for (let i = 0; i < COMBAT_SECONDS / STEP; i += 1) {
-      stepWorld(world, input, SILENT, STEP);
-    }
-    return { screen: SCREEN_PLAY, best: 900 };
-  }
-  // Default: the cover — a high-speed chase through Downtown at three stars.
-  const car = spawnParkedCar(world, 1600, 200, 'Harbor Coupe');
-  world.player.x = 1600;
-  world.player.y = 200;
-  world.player.inCar = car;
-  car.driver = 'player';
-  world.wanted = 3;
-  spawnPoliceCar(world);
-  spawnPoliceCar(world);
-  world.mission.index = 5;
-  world.mission.active = true;
-  world.mission.step = 1;
-  world.mission.timer = 12;
-  world.mission.banner = 'Kestrel: "Shake them, Juno. The boat leaves at dawn."';
-  world.mission.bannerTime = 6;
-  stepFor(world, COVER_SECONDS, driveAutopilot, false);
-  return { screen: SCREEN_PLAY, best: 2500 };
 }

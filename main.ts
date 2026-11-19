@@ -3,10 +3,11 @@
 // (game/index.html and its ES modules, no library and no network request), and the
 // program hands it in. It copies game/ and screenshots/ from beside this file to /output
 // and writes /output/dossier.json, the summary the judge reads, with the vendored make.fun
-// library. The game itself is an original top-down open-world crime story: explore Neon
-// Harbor on foot and by car, steal cars, outrun the Harbor PD through five wanted levels,
-// run six story missions for Madame Kestrel, fight the Rust Vultures, and save progress
-// in localStorage. Screenshots are real renders of the running game (see shots.json).
+// library. The game itself is an original 3D open-world crime game (three.js r180 +
+// cannon-es RaycastVehicle for the player's car, kinematic road-graph traffic): explore
+// Neon Harbor on foot and by car, steal cars, outrun the Harbor PD through five wanted
+// levels, run six story missions for Madame Kestrel, fight the Rust Vultures, and save
+// progress in localStorage. Screenshots are real renders of the running game (see shots.json).
 //
 // Serve it locally with `node serve.ts`, then open http://localhost:8080.
 // Outside the grader's container, MAKEFUN_OUTPUT_DIR stands in for /output:
