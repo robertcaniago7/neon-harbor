@@ -1,67 +1,174 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
-<title>Neon Harbor — an open-world crime story</title>
+<title>Neon Harbor — an original 3D open-world crime game</title>
 <style>
-  html, body { margin: 0; height: 100%; overflow: hidden; background: #0d0a1a; }
-  #game { position: fixed; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; cursor: crosshair; }
-  /* Read aloud, never shown: the status line screen readers announce. */
-  #status { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
-  /* Touch controls: hidden on desktop, shown on touch screens. */
-  #touch-pad { display: none; }
-  html.touch #touch-pad { display: block; }
-  @media (pointer: coarse) { #touch-pad { display: block; } }
-  #touch-pad button {
-    font-family: system-ui, sans-serif; font-weight: 700; color: #fff;
-    background: rgba(20, 16, 40, 0.55); border: 2px solid rgba(255, 255, 255, 0.35);
-    border-radius: 14px; touch-action: none; user-select: none; -webkit-user-select: none;
-    -webkit-tap-highlight-color: transparent;
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { width: 100%; height: 100%; overflow: hidden; background: #0b0e1a;
+    font-family: 'Segoe UI', system-ui, -apple-system, sans-serif; color: #fff;
+    -webkit-user-select: none; user-select: none; }
+  #game { position: fixed; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; }
+
+  /* ---------- HUD ---------- */
+  #hud { position: fixed; inset: 0; pointer-events: none; z-index: 5; }
+  #stars { position: absolute; top: 12px; right: 16px; font-size: 28px; letter-spacing: 4px;
+    color: #ffd23f; text-shadow: 0 0 8px rgba(255, 210, 63, .6), 0 2px 2px #000; }
+  #stars.cooling { opacity: .55; }
+  #objective { position: absolute; top: 12px; left: 16px; max-width: 46vw; font-size: 15px;
+    font-weight: 600; text-shadow: 0 2px 3px #000; background: rgba(0,0,0,.35);
+    padding: 6px 10px; border-radius: 6px; border-left: 3px solid #ffd23f; }
+  #cash { position: absolute; top: 52px; right: 16px; font-size: 22px; font-weight: 800; color: #37b24d;
+    text-shadow: 0 2px 3px #000; }
+  #bars { position: absolute; right: 16px; top: 84px; width: 180px; }
+  .bar { height: 10px; background: rgba(0,0,0,.55); border: 1px solid rgba(255,255,255,.35);
+    border-radius: 5px; margin-bottom: 5px; overflow: hidden; }
+  .bar > div { height: 100%; }
+  #health-fill { background: #2f9e44; width: 100%; }
+  #armor-fill { background: #3fa7d6; width: 0%; }
+  #weapon { position: absolute; right: 16px; top: 122px; font-size: 14px; font-weight: 700;
+    text-shadow: 0 2px 3px #000; }
+  #speed { position: absolute; right: 16px; bottom: 16px; font-size: 26px; font-weight: 800;
+    text-shadow: 0 2px 4px #000; }
+  #prompt { position: absolute; left: 50%; bottom: 96px; transform: translateX(-50%);
+    font-size: 16px; font-weight: 700; background: rgba(0,0,0,.55); padding: 8px 14px;
+    border-radius: 6px; text-shadow: 0 1px 2px #000; white-space: nowrap; }
+  #prompt:empty { display: none; }
+  #toast { position: absolute; left: 50%; top: 18%; transform: translateX(-50%);
+    max-width: 82vw; text-align: center; font-size: 18px; font-weight: 700;
+    background: rgba(10,10,25,.75); border: 1px solid rgba(255,210,63,.5);
+    padding: 10px 18px; border-radius: 8px; opacity: 0; transition: opacity .3s;
+    text-shadow: 0 1px 2px #000; }
+  #minimap { position: absolute; left: 16px; bottom: 16px; width: 180px; height: 180px;
+    border: 2px solid rgba(255,255,255,.4); border-radius: 8px; background: #20242c;
+    box-shadow: 0 2px 10px rgba(0,0,0,.5); }
+  #crosshair { position: absolute; left: 50%; top: 50%; width: 22px; height: 22px;
+    transform: translate(-50%, -50%); display: none; }
+  #crosshair::before, #crosshair::after { content: ''; position: absolute; background: #fff;
+    box-shadow: 0 0 3px #000; }
+  #crosshair::before { left: 10px; top: 0; width: 2px; height: 22px; }
+  #crosshair::after { left: 0; top: 10px; width: 22px; height: 2px; }
+
+  /* ---------- touch controls ---------- */
+  #joy-zone { position: fixed; left: 0; bottom: 0; width: 45vw; height: 45vh; z-index: 6; display: none; }
+  .touch #joy-zone { display: block; }
+  .tbtn { position: fixed; z-index: 7; width: 64px; height: 64px; border-radius: 50%;
+    border: 2px solid rgba(255,255,255,.6); background: rgba(0,0,0,.45); color: #fff;
+    font-size: 13px; font-weight: 800; display: none; align-items: center; justify-content: center;
+    text-align: center; pointer-events: auto; }
+  .touch .tbtn { display: flex; }
+  #btn-shoot { right: 20px; bottom: 96px; background: rgba(180,30,30,.55); }
+  #btn-car { right: 100px; bottom: 40px; }
+  #btn-punch { right: 20px; bottom: 180px; }
+  #btn-mission { right: 100px; bottom: 130px; background: rgba(255,210,63,.35); }
+  #btn-pause { right: 16px; top: 150px; width: 48px; height: 48px; font-size: 18px; }
+
+  /* ---------- screens ---------- */
+  .screen { position: fixed; inset: 0; z-index: 10; display: flex; flex-direction: column;
+    align-items: center; justify-content: center; text-align: center;
+    background: linear-gradient(180deg, rgba(5,5,20,.55) 0%, rgba(5,5,20,.82) 100%);
+    padding: 20px; }
+  .screen.hidden { display: none; }
+  .screen h1 { font-size: min(64px, 11vw); font-weight: 900; letter-spacing: 4px;
+    background: linear-gradient(90deg, #ff2d95, #ffd23f, #00e5ff);
+    -webkit-background-clip: text; background-clip: text; color: transparent;
+    text-shadow: 0 0 30px rgba(255,45,149,.35); margin-bottom: 4px; }
+  .screen h2 { font-size: min(52px, 10vw); font-weight: 900; letter-spacing: 6px; margin-bottom: 8px; }
+  .screen p { max-width: 560px; font-size: 16px; line-height: 1.5; color: #d8dce8; margin-bottom: 14px; }
+  .screen .tag { font-size: 13px; letter-spacing: 2px; text-transform: uppercase; color: #ffd23f;
+    margin-bottom: 18px; font-weight: 700; }
+  .btn { pointer-events: auto; cursor: pointer; border: none; border-radius: 8px;
+    padding: 13px 34px; font-size: 17px; font-weight: 800; letter-spacing: 1px;
+    background: linear-gradient(90deg, #ff2d95, #ff6b35); color: #fff; margin: 5px;
+    box-shadow: 0 4px 18px rgba(255,45,149,.45); }
+  .btn:hover { filter: brightness(1.15); }
+  .btn.ghost { background: rgba(255,255,255,.12); box-shadow: none; border: 1px solid rgba(255,255,255,.35); }
+  .controls { font-size: 13px; color: #9aa0b5; line-height: 1.9; margin-top: 12px; }
+  .controls b { color: #e8ecf5; }
+  #title-best { font-size: 14px; color: #37b24d; font-weight: 700; margin-top: 6px; }
+  @media (max-width: 640px) {
+    #minimap { width: 120px; height: 120px; bottom: 200px; }
+    #objective { max-width: 60vw; font-size: 13px; }
+    #stars { font-size: 22px; }
+    #bars { width: 130px; }
+    #speed { font-size: 20px; }
+    #prompt { bottom: 340px; font-size: 14px; }
   }
-  #touch-pad button:active { background: rgba(255, 210, 63, 0.55); }
-  .dpad {
-    position: fixed; left: 14px; bottom: 18px; z-index: 10;
-    display: grid; grid-template-columns: repeat(3, 58px); grid-template-rows: repeat(3, 58px); gap: 4px;
-  }
-  .dpad button { font-size: 22px; }
-  #btn-up { grid-column: 2; grid-row: 1; }
-  #btn-left { grid-column: 1; grid-row: 2; }
-  #btn-right { grid-column: 3; grid-row: 2; }
-  #btn-down { grid-column: 2; grid-row: 3; }
-  .actions {
-    position: fixed; right: 14px; bottom: 18px; z-index: 10;
-    display: grid; grid-template-columns: repeat(2, 68px); grid-auto-rows: 58px; gap: 8px;
-  }
-  .actions button { font-size: 12px; letter-spacing: 0.5px; }
-  .mini {
-    position: fixed; right: 14px; top: 185px; z-index: 10;
-    display: flex; gap: 8px;
-  }
-  .mini button { font-size: 11px; padding: 10px 12px; }
 </style>
+<script type="importmap">
+{
+  "imports": {
+    "three": "./vendor/three.module.min.js",
+    "cannon-es": "./vendor/cannon-es.min.js",
+    "nipplejs": "./vendor/nipplejs.min.js"
+  }
+}
+</script>
 </head>
 <body>
-<canvas id="game" aria-label="Neon Harbor: explore the city on foot and by car, steal cars, dodge the police and run missions for Madame Kestrel"></canvas>
-<p id="status" role="status" aria-live="polite"></p>
-<div id="touch-pad" aria-hidden="true">
-  <div class="dpad">
-    <button id="btn-up" type="button">▲</button>
-    <button id="btn-left" type="button">◀</button>
-    <button id="btn-right" type="button">▶</button>
-    <button id="btn-down" type="button">▼</button>
+<canvas id="game"></canvas>
+
+<div id="hud">
+  <div id="objective"></div>
+  <div id="stars">☆☆☆☆☆</div>
+  <div id="cash">$150</div>
+  <div id="bars">
+    <div class="bar"><div id="health-fill"></div></div>
+    <div class="bar"><div id="armor-fill"></div></div>
   </div>
-  <div class="actions">
-    <button id="btn-car" type="button">MOBIL</button>
-    <button id="btn-punch" type="button">PUKUL</button>
-    <button id="btn-mission" type="button">MISI</button>
-    <button id="btn-pause" type="button">JEDA</button>
+  <div id="weapon">Fists</div>
+  <canvas id="minimap" width="180" height="180"></canvas>
+  <div id="crosshair"></div>
+  <div id="prompt"></div>
+  <div id="toast"></div>
+  <div id="speed"></div>
+</div>
+
+<div id="joy-zone"></div>
+<button class="tbtn" id="btn-shoot">SHOOT</button>
+<button class="tbtn" id="btn-car">CAR</button>
+<button class="tbtn" id="btn-punch">HIT</button>
+<button class="tbtn" id="btn-mission">JOB</button>
+<button class="tbtn" id="btn-pause">II</button>
+
+<div class="screen" id="screen-title">
+  <div class="tag">An original 3D open-world crime game</div>
+  <h1>NEON HARBOR</h1>
+  <p>You are <b>Juno Voss</b>, a getaway driver who owes <b>Madame Kestrel</b> one last favour —
+  and the <b>Rust Vultures</b> want the harbour for themselves. Steal cars, outrun the Harbor PD,
+  and run six story jobs across a city that never sleeps.</p>
+  <div>
+    <button class="btn" id="btn-start">Start new game</button>
+    <button class="btn ghost hidden" id="btn-continue">Continue</button>
   </div>
-  <div class="mini">
-    <button id="btn-continue" type="button">LANJUT</button>
-    <button id="btn-mute" type="button">SUARA</button>
+  <div id="title-best"></div>
+  <div class="controls">
+    <b>WASD</b> move / drive &nbsp;·&nbsp; <b>Mouse drag</b> look &nbsp;·&nbsp; <b>Click</b> shoot<br>
+    <b>F</b> enter / exit car &nbsp;·&nbsp; <b>E</b> punch &nbsp;·&nbsp; <b>Enter</b> start job<br>
+    <b>Space</b> brake &nbsp;·&nbsp; <b>1 / 2</b> fists / pistol &nbsp;·&nbsp; <b>P</b> pause &nbsp;·&nbsp; <b>M</b> mute<br>
+    Touch: joystick to move, SHOOT / CAR / HIT / JOB buttons.
   </div>
 </div>
+
+<div class="screen hidden" id="screen-pause">
+  <h2>PAUSED</h2>
+  <p>Neon Harbor waits for no one — except right now.</p>
+  <div>
+    <button class="btn" id="btn-resume">Resume</button>
+    <button class="btn ghost" id="btn-restart">Restart</button>
+    <button class="btn ghost" id="btn-quit">Quit to title</button>
+  </div>
+  <div><button class="btn ghost" id="btn-mute">Sound: ON</button></div>
+</div>
+
+<div class="screen hidden" id="screen-over">
+  <h2 id="over-title">WASTED</h2>
+  <p id="over-stats"></p>
+  <div><button class="btn" id="btn-again">Play again</button></div>
+</div>
+
 <script type="module" src="./src/main.js"></script>
 </body>
 </html>

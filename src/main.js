@@ -1,209 +1,256 @@
-// Boot and the one loop: input is read every frame, the world advances in fixed 1/60 s
-// steps, and the renderer paints what is there. The game moves between four screens:
-// title, play, paused and game over. Enter starts the next mission while playing.
-//
-// ?seed=N fixes the city. ?shot=cover|city|mission|combat (with &seed=N) stages that
-// scene instead of running the loop, paints it twice and sets window.__shotReady.
-import { STEP } from './config.js';
-import { createWorld, resetWorld, stepWorld, toggleCar, startMission, playerPos } from './world.js';
-import { ACTION_CONFIRM, ACTION_PAUSE, ACTION_INTERACT, ACTION_ENTER, ACTION_MUTE, ACTION_CONTINUE, createInput } from './input.js';
-import { createRenderer, SCREEN_OVER, SCREEN_PAUSED, SCREEN_PLAY, SCREEN_TITLE } from './render.js';
-import { createAudio } from './audio.js';
-import { stageShot } from './shots.js';
-import { saveGame, loadGame, clearSave, readBest, saveBest } from './save.js';
+// Neon Harbor 3D: entry point. Screens (title / play / pause / game over), the
+// chase camera, the render loop, and the ?shot= staging mode for screenshots.
 
-const MAX_FRAME = 0.25;
-const AUTOSAVE_SECONDS = 10;
+import * as THREE from 'three';
+import { createGame, stepGame, loadGame, clearSave } from './world.js';
+import { stageShot, SHOT_NAMES } from './shots.js';
+import { ACTION_CONFIRM, ACTION_PAUSE, ACTION_CONTINUE, ACTION_MUTE } from './input.js';
+import { stepTraffic, stepPeds } from './traffic.js';
+import { currentMission } from './missions.js';
 
-const params = new URLSearchParams(window.location.search);
-const shot = params.get('shot');
-const seedParam = Number.parseInt(params.get('seed') ?? '', 10);
-const seed = Number.isInteger(seedParam) ? seedParam : Math.floor(Math.random() * 4294967296);
-
+const params = new URLSearchParams(location.search);
 const canvas = document.getElementById('game');
-const status = document.getElementById('status');
-const world = createWorld(seed);
-const renderer = createRenderer(canvas);
-const audio = createAudio();
+const isMobile = window.matchMedia('(pointer: coarse)').matches;
+const quality = params.get('quality') || (isMobile ? 'low' : 'high');
+const seed = Number.parseInt(params.get('seed') ?? '20261119', 10) || 20261119;
 
-function snapshotSave() {
-  const p = world.player;
-  return {
-    x: p.x, y: p.y, cash: p.cash, health: p.health, armor: p.armor,
-    weapon: p.weapon, ammo: p.ammo,
-    missionIndex: world.mission.index, cashEarned: world.cashEarned, kills: world.kills,
-  };
+let ctx = createGame(canvas, { seed, quality });
+
+const $ = (id) => document.getElementById(id);
+const overlays = {
+  title: $('screen-title'),
+  pause: $('screen-pause'),
+  over: $('screen-over'),
+};
+
+let screen = 'title';
+let titleYaw = 0.6;
+
+function showOverlay(name) {
+  for (const [k, el] of Object.entries(overlays)) {
+    if (el) el.classList.toggle('hidden', k !== name);
+  }
 }
 
-function applySave(data) {
-  const p = world.player;
-  p.x = data.x ?? 1500;
-  p.y = data.y ?? 200;
-  p.cash = data.cash ?? 150;
-  p.health = data.health ?? 100;
-  p.armor = data.armor ?? 0;
-  p.weapon = data.weapon ?? 'fists';
-  p.ammo = data.ammo ?? 0;
-  world.mission.index = data.missionIndex ?? 0;
-  world.cashEarned = data.cashEarned ?? 0;
-  world.kills = data.kills ?? 0;
-  p.inCar = null;
-  p.dead = false;
-  world.over = null;
+function startPlay() {
+  screen = 'play';
+  showOverlay(null);
+  // a clicked button keeps keyboard focus; Enter/Space would re-click it
+  if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
+  ctx.audio.unlock();
+  ctx.audio.pad(true);
 }
 
-function runShot(name) {
-  const scene = stageShot(name, world);
-  let painted = 0;
-  function paint() {
-    renderer.draw(world, scene.screen, scene.best, performance.now() / 1000);
-    painted += 1;
-    if (painted < 2) requestAnimationFrame(paint);
-    else window.__shotReady = true;
-  }
-  requestAnimationFrame(paint);
+function pauseGame() {
+  if (screen !== 'play') return;
+  screen = 'pause';
+  showOverlay('pause');
+  ctx.saveNow();
+  ctx.audio.pad(false);
+  ctx.audio.engineOff();
 }
 
-function runGame() {
-  const input = createInput(canvas);
-  let screen = SCREEN_TITLE;
-  let best = readBest();
-  let accumulator = 0;
-  let last = performance.now();
-  let saveTimer = 0;
-  let lastMissionIndex = 0;
-  const hasSave = !!loadGame();
+function resumeGame() {
+  screen = 'play';
+  showOverlay(null);
+  ctx.audio.unlock();
+  ctx.audio.pad(true);
+}
 
-  function announce(message) {
-    status.textContent = message;
+function quitToTitle() {
+  ctx.saveNow();
+  screen = 'title';
+  showOverlay('title');
+  ctx.audio.pad(false);
+  ctx.audio.engineOff();
+  ctx.audio.siren(false);
+  refreshTitleButtons();
+}
+
+function showOver() {
+  screen = 'over';
+  const title = $('over-title');
+  const stats = $('over-stats');
+  if (title) title.textContent = ctx.over === 'busted' ? 'BUSTED' : 'WASTED';
+  if (stats) {
+    stats.textContent = `Cash $${Math.floor(ctx.player.cash)} · ${ctx.stats.kills} Vultures down · ${ctx.missions.index} jobs done · Best $${ctx.best}`;
   }
+  showOverlay('over');
+}
 
-  function startNewGame() {
-    resetWorld(world);
-    lastMissionIndex = 0;
-    saveTimer = 0;
-    screen = SCREEN_PLAY;
-    announce('Playing. Drive to the yellow marker — press Enter to start the first mission.');
+function refreshTitleButtons() {
+  const save = loadGame();
+  const cont = $('btn-continue');
+  if (cont) cont.classList.toggle('hidden', !save);
+  const best = $('title-best');
+  if (best) best.textContent = save ? `Best cash: $${ctx.best}` : '';
+}
+
+$('btn-start')?.addEventListener('click', () => {
+  clearSave();
+  ctx.resetGame();
+  startPlay();
+});
+$('btn-continue')?.addEventListener('click', () => startPlay());
+$('btn-resume')?.addEventListener('click', resumeGame);
+$('btn-restart')?.addEventListener('click', () => {
+  ctx.resetGame();
+  startPlay();
+});
+$('btn-quit')?.addEventListener('click', quitToTitle);
+$('btn-again')?.addEventListener('click', () => {
+  ctx.resetGame();
+  startPlay();
+});
+$('btn-mute')?.addEventListener('click', () => {
+  ctx.audio.setMuted(!ctx.audio.isMuted());
+  $('btn-mute').textContent = ctx.audio.isMuted() ? 'Sound: OFF' : 'Sound: ON';
+});
+refreshTitleButtons();
+showOverlay('title');
+
+// --- camera ---
+function updateCamera(dt) {
+  const target = new THREE.Vector3();
+  if (ctx.playerCar) {
+    const p = ctx.playerCar.state.position();
+    target.set(p.x, p.y + 2, p.z);
+  } else {
+    target.copy(ctx.player.pos).add(new THREE.Vector3(0, 1.6, 0));
   }
-
-  function continueGame() {
-    const data = loadGame();
-    if (!data) return;
-    resetWorld(world);
-    applySave(data);
-    lastMissionIndex = world.mission.index;
-    screen = SCREEN_PLAY;
-    announce('Welcome back to Neon Harbor.');
+  const dist = ctx.camDist;
+  const cp = ctx.camPitch;
+  const cy = ctx.camYaw;
+  const off = new THREE.Vector3(
+    Math.sin(cy) * Math.cos(cp),
+    Math.sin(cp),
+    Math.cos(cy) * Math.cos(cp),
+  ).multiplyScalar(dist);
+  ctx.camera.position.copy(target).add(off);
+  if (ctx.camera.position.y < 0.8) ctx.camera.position.y = 0.8;
+  ctx.camera.lookAt(target);
+  if (ctx.shake > 0) {
+    ctx.camera.position.x += (Math.random() - 0.5) * ctx.shake * 0.5;
+    ctx.camera.position.y += (Math.random() - 0.5) * ctx.shake * 0.5;
+    ctx.shake = Math.max(0, ctx.shake - dt * 1.4);
   }
+  const speedNorm = ctx.playerCar ? Math.min(1, Math.abs(ctx.playerCar.state.speed) / 30) : 0;
+  const targetFov = 70 + speedNorm * 12;
+  ctx.camera.fov += (targetFov - ctx.camera.fov) * Math.min(1, dt * 3);
+  ctx.camera.updateProjectionMatrix();
+}
 
-  function endGame() {
-    screen = SCREEN_OVER;
-    if (world.cashEarned > best) {
-      best = world.cashEarned;
-      saveBest(best);
-    }
-    clearSave();
-    announce(`Game over. Cash earned $${world.cashEarned}. Best $${best}.`);
+function updateTitleCamera(dt) {
+  titleYaw += dt * 0.04;
+  const target = new THREE.Vector3(25, 16, 0);
+  ctx.camera.position.set(
+    target.x + Math.sin(titleYaw) * 130,
+    48,
+    target.z + Math.cos(titleYaw) * 130,
+  );
+  ctx.camera.lookAt(target);
+  if (ctx.camera.fov !== 60) {
+    ctx.camera.fov = 60;
+    ctx.camera.updateProjectionMatrix();
   }
+}
 
-  function handleActions() {
-    const { actions, clicked } = input.takeActions();
-    if (actions & ACTION_MUTE) {
-      audio.setMuted(!audio.isMuted());
-      announce(audio.isMuted() ? 'Muted.' : 'Sound on.');
-    }
-    if (screen === SCREEN_TITLE) {
-      if (actions & ACTION_CONTINUE && hasSave) {
-        audio.unlock();
-        continueGame();
-      } else if (actions & ACTION_CONFIRM || clicked) {
-        audio.unlock();
-        startNewGame();
-      }
-      return;
-    }
-    if (screen === SCREEN_OVER) {
-      if (actions & ACTION_CONFIRM || clicked) startNewGame();
-      return;
-    }
-    if (actions & ACTION_PAUSE && screen === SCREEN_PLAY) {
-      screen = SCREEN_PAUSED;
-      announce('Paused.');
-    } else if (actions & (ACTION_PAUSE | ACTION_CONFIRM) && screen === SCREEN_PAUSED) {
-      screen = SCREEN_PLAY;
-      announce('Playing.');
-    }
-    if (screen !== SCREEN_PLAY) return;
-    if (actions & ACTION_ENTER) {
-      const result = toggleCar(world, audio);
-      if (result === 'enter') announce('In the car. Drive!');
-      else if (result === 'exit') announce('On foot.');
-    }
-    if (actions & ACTION_CONFIRM && !world.mission.active && !world.mission.done) {
-      startMission(world, audio);
-      announce('Mission started.');
-    }
-    if (actions & ACTION_INTERACT) {
-      world._punch = true;
-    }
-  }
+function attractStep(dt) {
+  ctx.daynight.update(ctx.dayT, new THREE.Vector3(0, 0, 0));
+  ctx.city.update(dt);
+  stepTraffic(ctx.traffic, ctx.city, dt, null);
+  stepPeds(ctx.peds, ctx.city, dt, null);
+}
 
-  function step() {
-    const cam = renderer.getCamera();
-    const mouse = input.mouse;
-    const stepInput = {
-      held: input.held,
-      mouse: { down: mouse.down, x: mouse.x, y: mouse.y },
-      punch: !!world._punch,
-      mouseWorldX: mouse.x + cam.x,
-      mouseWorldY: mouse.y + cam.y,
-    };
-    world._punch = false;
-    stepWorld(world, stepInput, audio, STEP);
-    if (world.events.length) {
-      announce(world.events[world.events.length - 1]);
-      world.events.length = 0;
-    }
-    if (world.over) endGame();
-  }
+// --- shot mode: stage, settle, freeze, signal readiness ---
+const shotName = params.get('shot');
+if (shotName && SHOT_NAMES.includes(shotName)) {
+  stageShot(ctx, shotName);
+  if (ctx.shotDrive) ctx.input.held.up = true;
+  for (let i = 0; i < 150; i++) stepGame(ctx, 1 / 60, { actions: 0 });
+  ctx.input.held.up = false;
+  updateCamera(0.016);
+  ctx.renderer.render(ctx.scene, ctx.camera);
+  screen = 'shot';
+  showOverlay(null);
+  // a clean frame: no toast text over the shot
+  const toast = document.getElementById('toast');
+  if (toast) toast.style.opacity = '0';
+  window.__shotReady = true;
+}
 
-  function frame(now) {
-    requestAnimationFrame(frame);
-    accumulator += Math.min((now - last) / 1000, MAX_FRAME);
-    last = now;
-    handleActions();
-    if (screen === SCREEN_PLAY) {
-      while (accumulator >= STEP && screen === SCREEN_PLAY) {
-        step();
-        accumulator -= STEP;
-        saveTimer += STEP;
-        if (saveTimer > AUTOSAVE_SECONDS) {
-          saveTimer = 0;
-          saveGame(snapshotSave());
-        }
-        if (world.mission.index !== lastMissionIndex) {
-          lastMissionIndex = world.mission.index;
-          saveGame(snapshotSave());
-        }
-      }
-    } else {
-      accumulator = 0;
-    }
-    renderer.draw(world, screen, best, now / 1000);
-  }
-
-  document.addEventListener('visibilitychange', () => {
-    if (document.hidden && screen === SCREEN_PLAY) {
-      screen = SCREEN_PAUSED;
-      announce('Paused.');
-    }
-  });
-
-  announce(hasSave
-    ? 'Neon Harbor. Press Space for a new game, or C to continue.'
-    : 'Neon Harbor. Press Space or click to start.');
+// --- main loop ---
+let last = performance.now();
+function frame(now) {
   requestAnimationFrame(frame);
+  const dt = Math.min(0.05, (now - last) / 1000);
+  last = now;
+  const acts = ctx.input.takeActions();
+  if (acts.actions & ACTION_MUTE) {
+    ctx.audio.setMuted(!ctx.audio.isMuted());
+    const b = $('btn-mute');
+    if (b) b.textContent = ctx.audio.isMuted() ? 'Sound: OFF' : 'Sound: ON';
+  }
+  if (screen === 'play') {
+    if (acts.actions & ACTION_PAUSE) {
+      pauseGame();
+    } else {
+      stepGame(ctx, dt, acts);
+      updateCamera(dt);
+      if (ctx.over) showOver();
+    }
+  } else if (screen === 'title') {
+    attractStep(dt);
+    updateTitleCamera(dt);
+    if (acts.actions & ACTION_CONFIRM) {
+      clearSave();
+      ctx.resetGame();
+      startPlay();
+    } else if (acts.actions & ACTION_CONTINUE) {
+      startPlay();
+    }
+  } else if (screen === 'pause') {
+    if (acts.actions & ACTION_PAUSE) resumeGame();
+  }
+  ctx.renderer.render(ctx.scene, ctx.camera);
 }
 
-if (shot) runShot(shot);
-else runGame();
+window.addEventListener('resize', () => {
+  ctx.camera.aspect = window.innerWidth / window.innerHeight;
+  ctx.camera.updateProjectionMatrix();
+  ctx.renderer.setSize(window.innerWidth, window.innerHeight);
+});
+
+// Dev probe for automated playtests (read-only state + the live context).
+// Harmless in the shipped game: single-player, no leaderboard.
+window.__nh = {
+  get ctx() { return ctx; },
+  /** Advance the simulation by dt seconds without rendering (deterministic QA). */
+  step(dt, actions = 0) {
+    if (screen === 'play') stepGame(ctx, dt, { actions });
+  },
+  ACTIONS: { CONFIRM: 1, PAUSE: 2, INTERACT: 4, ENTER: 8, MUTE: 16, CONTINUE: 32 },
+  state() {
+    const p = ctx.player;
+    const car = ctx.playerCar;
+    return {
+      pos: { x: +p.pos.x.toFixed(1), z: +p.pos.z.toFixed(1) },
+      heading: +p.heading.toFixed(3),
+      health: p.health, armor: p.armor, cash: Math.floor(p.cash),
+      weapon: p.weapon, ammo: p.ammo, inCar: !!car,
+      speed: car ? +car.state.speed.toFixed(2) : 0,
+      wanted: ctx.police.wanted,
+      mission: ctx.missions.index, missionActive: ctx.missions.active,
+      missionStep: ctx.missions.step, kills: ctx.missions.kills,
+      enemies: ctx.combat.enemies.length,
+      parked: ctx.parkedCars.length,
+      traffic: ctx.traffic.cars.length, peds: ctx.peds.peds.length,
+      policeCars: ctx.police.cars.length, foot: ctx.police.foot.length,
+      over: ctx.over, dayT: +ctx.dayT.toFixed(3),
+      drawCalls: ctx.renderer.info.render.calls,
+      triangles: ctx.renderer.info.render.triangles,
+    };
+  },
+};
+
+requestAnimationFrame(frame);
