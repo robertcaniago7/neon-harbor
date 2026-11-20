@@ -1,6 +1,6 @@
-// Neon Harbor 3D — seeded RNG (mulberry32) so screenshots and layouts are reproducible.
+// Seeded RNG (mulberry32) so screenshot staging is reproducible.
+// Every random choice in the city build flows through one of these helpers.
 
-/** A small fast seeded PRNG. Returns a function that yields [0, 1). */
 export function mulberry32(seed) {
   let a = seed >>> 0;
   return function () {
@@ -12,37 +12,45 @@ export function mulberry32(seed) {
   };
 }
 
-/** A small helper object around a seeded RNG. */
-export function makeRng(seed) {
+// Small wrapper object so callers can keep one rng and use named helpers.
+export function createRng(seed) {
   const next = mulberry32(seed);
   return {
     next,
-    /** Float in [min, max). */
+    // float in [min, max)
     range(min, max) {
       return min + next() * (max - min);
     },
-    /** Integer in [min, max] inclusive. */
+    // integer in [min, max] inclusive
     int(min, max) {
-      return min + Math.floor(next() * (max - min + 1));
+      return Math.floor(min + next() * (max - min + 1));
     },
-    /** Pick one element of an array. */
+    // pick one element of an array
     pick(arr) {
       return arr[Math.floor(next() * arr.length)];
     },
-    /** Weighted pick from [{value, weight}] or a list of [value, weight] pairs. */
-    weighted(pairs) {
+    // weighted pick: entries are {value, weight} or [value, weight]
+    weighted(entries) {
       let total = 0;
-      for (const [, w] of pairs) total += w;
-      let roll = next() * total;
-      for (const [v, w] of pairs) {
-        roll -= w;
-        if (roll <= 0) return v;
+      for (const e of entries) total += e.weight ?? e[1];
+      let r = next() * total;
+      for (const e of entries) {
+        const w = e.weight ?? e[1];
+        if (r < w) return e.value ?? e[0];
+        r -= w;
       }
-      return pairs[pairs.length - 1][0];
+      const last = entries[entries.length - 1];
+      return last.value ?? last[0];
     },
-    /** True with probability p. */
+    // true with probability p
     chance(p) {
       return next() < p;
     },
+    // random sign
+    sign() {
+      return next() < 0.5 ? -1 : 1;
+    },
   };
 }
+
+export default createRng;

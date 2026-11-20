@@ -1,205 +1,240 @@
-// Neon Harbor 3D — fists and the HK-9 pistol, tracers, hit detection, pickups
-// and gang shootouts.
+// Combat: fists + HK-9 pistol, tracer lines, hit detection, health/armor/
+// ammo/cash pickups, and gang shootouts (Rust Vultures who fight back).
 
-import * as THREE from '../vendor/three.module.min.js';
+import * as THREE from 'three';
 import { CONFIG } from './config.js';
-import { buildPickupMesh } from './vehicle3d.js';
-import { buildGangMesh } from './character.js';
-import { addWanted } from './police.js';
+import { buildCharacterMesh } from './character.js';
 
-const W = CONFIG.world;
+const PUNCH = CONFIG.weapons.fists;
+const PISTOL = CONFIG.weapons.pistol;
 
-/** Create the combat state: tracers, pickups, gang members, cooldowns. */
-export function createCombat(game) {
+export function createCombat(scene, rng) {
+  const enemies = [];
   const pickups = [];
-  const kinds = ['health', 'armor', 'ammo', 'cash'];
-  for (let i = 0; i < 8; i++) {
-    const kind = kinds[i % kinds.length];
-    const mesh = buildPickupMesh(kind);
-    const x = CONFIG.world.roadX[Math.floor(Math.random() * CONFIG.world.roadX.length)] + (Math.random() < 0.5 ? -7 : 7);
-    const z = CONFIG.world.roadZ[Math.floor(Math.random() * CONFIG.world.roadZ.length)] + (Math.random() < 0.5 ? -7 : 7);
-    mesh.position.set(x, 0.8, z);
-    game.scene.add(mesh);
-    pickups.push({ kind, mesh, x, z, taken: false, respawn: 0 });
+  const tracers = [];
+  let pistolAmmo = PISTOL.ammo;
+  let punchTimer = 0;
+  let shootTimer = 0;
+
+  const tracerMat = new THREE.MeshBasicMaterial({ color: 0xffe9a8 });
+  const tracerGeo = new THREE.BoxGeometry(0.05, 0.05, 1);
+
+  function spawnTracer(from, to) {
+    const len = from.distanceTo(to);
+    const m = new THREE.Mesh(tracerGeo, tracerMat);
+    m.position.copy(from).add(to).multiplyScalar(0.5);
+    m.lookAt(to);
+    m.scale.set(1, 1, len);
+    scene.add(m);
+    tracers.push({ mesh: m, life: 0.09 });
   }
-  return {
-    pickups,
-    gang: [],
-    tracers: [],
-    shootCooldown: 0,
-    punchCooldown: 0,
-    muzzle: 0,
-  };
-}
 
-/** Spawn gang members (Rust Vultures) at a location for a shootout. */
-export function spawnGang(game, x, z, n) {
-  for (let i = 0; i < n; i++) {
-    const mesh = buildGangMesh();
-    const gx = x + (Math.random() - 0.5) * 14;
-    const gz = z + (Math.random() - 0.5) * 14;
-    mesh.position.set(gx, 0, gz);
-    game.scene.add(mesh);
-    game.combat.gang.push({ mesh, x: gx, z: gz, health: 60, shootTimer: 1 + Math.random() * 2 });
+  function updateTracers(dt) {
+    for (let i = tracers.length - 1; i >= 0; i--) {
+      const t = tracers[i];
+      t.life -= dt;
+      if (t.life <= 0) {
+        scene.remove(t.mesh);
+        tracers.splice(i, 1);
+      }
+    }
   }
-}
 
-/** Remove all gang members (mission cleared). */
-export function clearGang(game) {
-  for (const g of game.combat.gang) game.scene.remove(g.mesh);
-  game.combat.gang = [];
-}
+  // Spawn a gang member at (x,z). He shoots at the player when in range.
+  function spawnGang(x, z, health = 60) {
+    const { group, parts } = buildCharacterMesh({ gang: true, rng });
+    scene.add(group);
+    group.position.set(x, 0, z);
+    const rec = {
+      mesh: group, parts, x, z,
+      health, maxHealth: health,
+      shootTimer: rng.range(0.5, 1.5),
+      walkPhase: rng.next() * 6,
+      dead: false,
+    };
+    enemies.push(rec);
+    return rec;
+  }
 
-/** A short-lived tracer line from the muzzle to a hit point. */
-function spawnTracer(game, from, to) {
-  const geom = new THREE.BufferGeometry().setFromPoints([from, to]);
-  const mat = new THREE.LineBasicMaterial({ color: 0xffe9a8, transparent: true, opacity: 0.9 });
-  const line = new THREE.Line(geom, mat);
-  game.scene.add(line);
-  game.combat.tracers.push({ line, life: 0.09 });
-}
+  function clearEnemies() {
+    for (const e of enemies) scene.remove(e.mesh);
+    enemies.length = 0;
+  }
 
-/** Player punch: damages the nearest gang member / officer in range. */
-export function tryPunch(game) {
-  const c = game.combat;
-  if (c.punchCooldown > 0 || game.player.inCar) return;
-  c.punchCooldown = CONFIG.weapons.fists.cooldown;
-  game.audio.playPunch();
-  const px = game.player.pos.x;
-  const pz = game.player.pos.z;
-  const range = CONFIG.weapons.fists.range;
-  const hit = (target, tx, tz) => {
-    const d = Math.hypot(tx - px, tz - pz);
-    if (d > range) return false;
-    target.health -= CONFIG.weapons.fists.damage;
+  // Pickups: kind is 'health' | 'armor' | 'ammo' | 'cash'.
+  function spawnPickup(kind, x, z, value = 0) {
+    const color = kind === 'health' ? 0x37d67a : kind === 'armor' ? 0x3fa7d6
+      : kind === 'ammo' ? 0xf2c94c : 0x9b7ede;
+    const mat = new THREE.MeshStandardMaterial({
+      color, emissive: color, emissiveIntensity: 0.9, roughness: 0.4,
+    });
+    const mesh = new THREE.Mesh(new THREE.BoxGeometry(0.55, 0.55, 0.55), mat);
+    mesh.position.set(x, 0.7, z);
+    mesh.castShadow = true;
+    scene.add(mesh);
+    const rec = {
+      mesh, kind, x, z,
+      value: value || (kind === 'health' ? 30 : kind === 'armor' ? 25 : kind === 'ammo' ? 12 : 50),
+      spin: 0,
+    };
+    pickups.push(rec);
+    return rec;
+  }
+
+  function clearPickups() {
+    for (const p of pickups) scene.remove(p.mesh);
+    pickups.length = 0;
+  }
+
+  // Player punch: hits the nearest enemy in range + in front.
+  function punch(playerPos, playerHeading, onHit) {
+    if (punchTimer > 0) return false;
+    punchTimer = PUNCH.cooldown;
+    let best = null;
+    let bestD = PUNCH.range;
+    for (const e of enemies) {
+      if (e.dead) continue;
+      const dx = e.x - playerPos.x;
+      const dz = e.z - playerPos.z;
+      const d = Math.hypot(dx, dz);
+      if (d > bestD) continue;
+      const ang = Math.atan2(dx, dz);
+      let diff = Math.abs(ang - playerHeading);
+      if (diff > Math.PI) diff = Math.PI * 2 - diff;
+      if (diff > 1.1) continue;
+      bestD = d;
+      best = e;
+    }
+    if (best) {
+      best.health -= PUNCH.damage;
+      if (best.health <= 0) {
+        best.dead = true;
+        scene.remove(best.mesh);
+      }
+      if (onHit) onHit(best);
+      return true;
+    }
+    return false;
+  }
+
+  // Player shot: raycast-ish — nearest enemy within range and a narrow cone.
+  function shoot(playerPos, playerHeading, onHit) {
+    if (shootTimer > 0 || pistolAmmo <= 0) return false;
+    shootTimer = PISTOL.cooldown;
+    pistolAmmo -= 1;
+    const from = new THREE.Vector3(playerPos.x, 1.45, playerPos.z);
+    const dir = new THREE.Vector3(Math.sin(playerHeading), 0, Math.cos(playerHeading));
+    const to = from.clone().addScaledVector(dir, PISTOL.range);
+    let best = null;
+    let bestD = PISTOL.range;
+    for (const e of enemies) {
+      if (e.dead) continue;
+      const ex = e.x - playerPos.x;
+      const ez = e.z - playerPos.z;
+      const along = ex * dir.x + ez * dir.z;
+      if (along < 0 || along > bestD) continue;
+      const perp = Math.abs(ex * dir.z - ez * dir.x);
+      if (perp > 1.6) continue;
+      bestD = along;
+      best = e;
+    }
+    if (best) {
+      to.copy(from).addScaledVector(dir, bestD);
+      best.health -= PISTOL.damage;
+      if (best.health <= 0) {
+        best.dead = true;
+        scene.remove(best.mesh);
+        spawnPickup('cash', best.x + 1, best.z, 60);
+      }
+      if (onHit) onHit(best);
+    }
+    spawnTracer(from, to);
     return true;
-  };
-  for (const g of [...c.gang]) {
-    if (hit(g, g.x, g.z) && g.health <= 0) {
-      game.scene.remove(g.mesh);
-      c.gang.splice(c.gang.indexOf(g), 1);
-      game.player.cash += 25;
-    }
   }
-  for (const off of game.police.officers) {
-    if (hit(off, off.x, off.z)) addWanted(game, 1);
-  }
-}
 
-/** Player shoot: raycast from the camera through the crosshair. */
-export function tryShoot(game) {
-  const c = game.combat;
-  if (c.shootCooldown > 0 || game.player.inCar) return;
-  if (game.player.weapon !== 'pistol') return;
-  if (game.player.ammo <= 0) {
-    game.audio.playEmpty();
-    c.shootCooldown = 0.3;
-    return;
-  }
-  c.shootCooldown = CONFIG.weapons.pistol.cooldown;
-  game.player.ammo -= 1;
-  game.audio.playShot();
-  game.combat.muzzle = 0.05;
-  // ray from camera centre
-  const origin = new THREE.Vector3();
-  game.camera.getWorldPosition(origin);
-  const dir = new THREE.Vector3();
-  game.camera.getWorldDirection(dir);
-  const range = CONFIG.weapons.pistol.range;
-  const end = origin.clone().add(dir.clone().multiplyScalar(range));
-  // test gang members (as vertical capsules) and officers
-  const ray = new THREE.Raycaster(origin, dir, 0.1, range);
-  const targets = [];
-  for (const g of c.gang) targets.push({ obj: g.mesh, kind: 'gang', ref: g });
-  for (const off of game.police.officers) targets.push({ obj: off.mesh, kind: 'officer', ref: off });
-  const hits = ray.intersectObjects(targets.map((t) => t.obj), true);
-  let hitPoint = end;
-  if (hits.length > 0) {
-    hitPoint = hits[0].point;
-    const hitObj = hits[0].object;
-    const entry = targets.find((t) => t.obj === hitObj || t.obj.children?.includes(hitObj));
-    // walk up to the group root
-    let root = hitObj;
-    while (root.parent && root.parent !== game.scene) root = root.parent;
-    const target = targets.find((t) => t.obj === root);
-    if (target) {
-      if (target.kind === 'gang') {
-        target.ref.health -= CONFIG.weapons.pistol.damage;
-        if (target.ref.health <= 0) {
-          game.scene.remove(target.ref.mesh);
-          c.gang.splice(c.gang.indexOf(target.ref), 1);
-          game.player.cash += 40;
+  function update(dt, playerPos, playerHeading, damagePlayer) {
+    punchTimer = Math.max(0, punchTimer - dt);
+    shootTimer = Math.max(0, shootTimer - dt);
+    updateTracers(dt);
+
+    // Pickup spin + bob.
+    for (const p of pickups) {
+      p.spin += dt * 2.4;
+      p.mesh.rotation.y = p.spin;
+      p.mesh.position.y = 0.7 + Math.sin(p.spin * 1.6) * 0.12;
+    }
+
+    // Gang members: shuffle toward the player and shoot.
+    for (const e of enemies) {
+      if (e.dead) continue;
+      const dx = playerPos.x - e.x;
+      const dz = playerPos.z - e.z;
+      const dist = Math.hypot(dx, dz);
+      if (dist < 26) {
+        e.shootTimer -= dt;
+        e.mesh.rotation.y = Math.atan2(dx, dz);
+        if (dist > 9) {
+          const step = 2.6 * dt;
+          e.x += (dx / dist) * step;
+          e.z += (dz / dist) * step;
+          e.walkPhase += dt * 6;
+          const swing = Math.sin(e.walkPhase) * 0.5;
+          e.parts.armL.rotation.x = swing;
+          e.parts.armR.rotation.x = -swing;
+          e.parts.legL.rotation.x = -swing;
+          e.parts.legR.rotation.x = swing;
+        } else {
+          e.parts.armR.rotation.x = -1.35; // aim
+          if (e.shootTimer <= 0) {
+            e.shootTimer = rng.range(0.9, 1.7);
+            const from = new THREE.Vector3(e.x, 1.45, e.z);
+            const to = new THREE.Vector3(playerPos.x, 1.3, playerPos.z);
+            spawnTracer(from, to);
+            if (damagePlayer && rng.chance(0.45)) damagePlayer(rng.int(4, 9));
+          }
         }
-      } else {
-        addWanted(game, 1);
-        game.player.health = Math.max(0, game.player.health - 4);
+        e.mesh.position.set(e.x, 0, e.z);
       }
     }
   }
-  spawnTracer(game, origin.clone().add(dir.clone().multiplyScalar(1.2)), hitPoint);
-  // shooting in public raises heat
-  if (game.police.wanted < 1) addWanted(game, 1);
+
+  // Collect pickups near the player. Returns a list of what was taken.
+  function collect(playerPos, range = 1.6) {
+    const taken = [];
+    for (let i = pickups.length - 1; i >= 0; i--) {
+      const p = pickups[i];
+      const d = Math.hypot(p.x - playerPos.x, p.z - playerPos.z);
+      if (d < range) {
+        taken.push({ kind: p.kind, value: p.value });
+        scene.remove(p.mesh);
+        pickups.splice(i, 1);
+      }
+    }
+    return taken;
+  }
+
+  function getAmmo() {
+    return pistolAmmo;
+  }
+
+  function setAmmo(n) {
+    pistolAmmo = Math.max(0, n | 0);
+  }
+
+  function addAmmo(n) {
+    pistolAmmo += n;
+  }
+
+  function aliveEnemies() {
+    return enemies.filter((e) => !e.dead).length;
+  }
+
+  return {
+    enemies, pickups,
+    spawnGang, clearEnemies, spawnPickup, clearPickups,
+    punch, shoot, update, collect,
+    getAmmo, setAmmo, addAmmo, aliveEnemies,
+  };
 }
 
-/** Update combat: cooldowns, tracers, pickups, gang behaviour. */
-export function updateCombat(game, dt) {
-  const c = game.combat;
-  c.shootCooldown = Math.max(0, c.shootCooldown - dt);
-  c.punchCooldown = Math.max(0, c.punchCooldown - dt);
-  c.muzzle = Math.max(0, c.muzzle - dt);
-  // tracers fade
-  for (const t of [...c.tracers]) {
-    t.life -= dt;
-    t.line.material.opacity = Math.max(0, t.life / 0.09) * 0.9;
-    if (t.life <= 0) {
-      game.scene.remove(t.line);
-      t.line.geometry.dispose();
-      t.line.material.dispose();
-      c.tracers.splice(c.tracers.indexOf(t), 1);
-    }
-  }
-  // pickups: spin, bob, collect
-  for (const pk of c.pickups) {
-    if (pk.taken) {
-      pk.respawn -= dt;
-      if (pk.respawn <= 0) {
-        pk.taken = false;
-        pk.mesh.visible = true;
-      }
-      continue;
-    }
-    pk.mesh.rotation.y += dt * 2;
-    pk.mesh.position.y = 0.8 + Math.sin(game.elapsed * 2 + pk.x) * 0.15;
-    const d = Math.hypot(game.player.pos.x - pk.x, game.player.pos.z - pk.z);
-    if (d < 1.6 && !game.player.inCar) {
-      pk.taken = true;
-      pk.mesh.visible = false;
-      pk.respawn = 25;
-      if (pk.kind === 'health') game.player.health = Math.min(100, game.player.health + 30);
-      if (pk.kind === 'armor') game.player.armor = Math.min(50, game.player.armor + 25);
-      if (pk.kind === 'ammo') game.player.ammo += 12;
-      if (pk.kind === 'cash') game.player.cash += 50;
-      game.audio.playPickup();
-    }
-  }
-  // gang members shoot back when the player is near
-  for (const g of c.gang) {
-    g.shootTimer -= dt;
-    const d = Math.hypot(game.player.pos.x - g.x, game.player.pos.z - g.z);
-    if (d < 40 && g.shootTimer <= 0) {
-      g.shootTimer = 1.2 + Math.random() * 1.4;
-      game.audio.playShot(true);
-      const from = new THREE.Vector3(g.x, 1.4, g.z);
-      const to = new THREE.Vector3(game.player.pos.x, 1.2, game.player.pos.z);
-      spawnTracer(game, from, to);
-      if (Math.random() < 0.45) {
-        game.player.health = Math.max(0, game.player.health - 6);
-        game.hud.flashDamage();
-        if (game.player.health <= 0) game.die('Taken down by the Rust Vultures.');
-      }
-    }
-    // face the player
-    g.mesh.rotation.y = Math.atan2(game.player.pos.x - g.x, game.player.pos.z - g.z);
-  }
-  void W;
-}
+export default createCombat;

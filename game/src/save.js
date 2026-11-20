@@ -1,83 +1,84 @@
-// Neon Harbor 3D — localStorage save / load (progress, cash, best).
+// localStorage save/load: progress, cash, best score.
+// Keys are fixed by the spec so a save survives a reload.
 
 import { CONFIG } from './config.js';
 
-/** The save payload shape. */
-function emptySave() {
-  return {
-    version: 1,
-    cash: CONFIG.player.startCash,
-    health: CONFIG.player.health,
-    missionIndex: 0,
-    bestCash: 0,
-    savedAt: Date.now(),
-  };
-}
+const SAVE_KEY = CONFIG.saveKey;
+const BEST_KEY = CONFIG.bestKey;
 
-/** Save the current progress. */
-export function saveGame(game) {
+function safeParse(text) {
   try {
-    const data = {
-      version: 1,
-      cash: game.player.cash,
-      health: game.player.health,
-      missionIndex: game.missions.index,
-      bestCash: Math.max(game.bestCash || 0, game.player.cash),
-      savedAt: Date.now(),
-    };
-    localStorage.setItem(CONFIG.saveKey, JSON.stringify(data));
-    game.bestCash = data.bestCash;
-    return true;
-  } catch (err) {
-    console.warn('save failed', err);
-    return false;
-  }
-}
-
-/** Load saved progress, or null when there is none / it is unreadable. */
-export function loadGame() {
-  try {
-    const raw = localStorage.getItem(CONFIG.saveKey);
-    if (!raw) return null;
-    const data = JSON.parse(raw);
-    if (!data || data.version !== 1) return null;
-    return data;
-  } catch (err) {
-    console.warn('load failed', err);
+    return JSON.parse(text);
+  } catch (e) {
     return null;
   }
 }
 
-/** Record the best cash total (for the title screen). */
-export function saveBest(game) {
+// Load the save object, or null when there is none / it is corrupt.
+export function loadSave() {
   try {
-    const best = Math.max(loadBest(), game.player.cash);
-    localStorage.setItem(CONFIG.bestKey, String(best));
-    game.bestCash = best;
-    return best;
-  } catch (err) {
-    console.warn('best save failed', err);
-    return game.player.cash;
+    const raw = window.localStorage.getItem(SAVE_KEY);
+    if (!raw) return null;
+    const data = safeParse(raw);
+    if (!data || typeof data !== 'object') return null;
+    return {
+      mission: Number.isFinite(data.mission) ? data.mission : 0,
+      cash: Number.isFinite(data.cash) ? data.cash : CONFIG.player.startCash,
+      health: Number.isFinite(data.health) ? data.health : CONFIG.player.health,
+      best: Number.isFinite(data.best) ? data.best : 0,
+      completed: Array.isArray(data.completed) ? data.completed : [],
+    };
+  } catch (e) {
+    return null;
   }
 }
 
-/** Read the best cash total, or 0. */
+// Write the save object. Returns true on success.
+export function writeSave(data) {
+  try {
+    const payload = {
+      mission: data.mission | 0,
+      cash: Math.max(0, Math.round(data.cash || 0)),
+      health: Math.max(0, Math.round(data.health || 0)),
+      best: Math.max(0, Math.round(data.best || 0)),
+      completed: Array.isArray(data.completed) ? data.completed : [],
+      savedAt: Date.now(),
+    };
+    window.localStorage.setItem(SAVE_KEY, JSON.stringify(payload));
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
+
+// Best (highest cash earned in one run) is kept under its own key too.
 export function loadBest() {
   try {
-    return Number(localStorage.getItem(CONFIG.bestKey) ?? 0) || 0;
-  } catch (err) {
+    const raw = window.localStorage.getItem(BEST_KEY);
+    const n = raw === null ? 0 : parseInt(raw, 10);
+    return Number.isFinite(n) ? n : 0;
+  } catch (e) {
     return 0;
   }
 }
 
-/** Clear the save (fresh start). */
-export function clearSave() {
+export function writeBest(value) {
   try {
-    localStorage.removeItem(CONFIG.saveKey);
-    localStorage.removeItem(CONFIG.bestKey);
-  } catch (err) {
-    console.warn('clear save failed', err);
+    window.localStorage.setItem(BEST_KEY, String(Math.max(0, Math.round(value))));
+    return true;
+  } catch (e) {
+    return false;
   }
 }
 
-export { emptySave };
+// Remove the save entirely (used by the "new game" path).
+export function clearSave() {
+  try {
+    window.localStorage.removeItem(SAVE_KEY);
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
+
+export default { loadSave, writeSave, loadBest, writeBest, clearSave };

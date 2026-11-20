@@ -1,35 +1,31 @@
 // Neon Harbor 3D — every tuning number, colour and name in one place.
-// All values come from the design spec; nothing here reads a file.
+// All values come from the build spec. Nothing here is read from anywhere else.
 
 export const CONFIG = {
-  // ---- world ----
-  world: {
-    xMin: -230, xMax: 230,
-    zMin: -180, zMax: 180,
-    groundY: 0,
-    roadWidth: 10,
-    laneOffset: 2.2,
-    roadX: [-225, -175, -125, -75, -25, 25, 75, 125, 175, 225],
-    roadZ: [-175, -125, -75, -25, 25, 75, 125, 175],
-    blockX: [-200, -150, -100, -50, 0, 50, 100, 150, 200],
-    blockZ: [-150, -100, -50, 0, 50, 100, 150],
-    beachZ0: 180, beachZ1: 205,
-    seaZ: 205,
-  },
+  // World extents in metres: x east, z south, y up, ground y = 0.
+  world: { minX: -230, maxX: 230, minZ: -180, maxZ: 180 },
+  roadX: [-225, -175, -125, -75, -25, 25, 75, 125, 175, 225],
+  roadZ: [-175, -125, -75, -25, 25, 75, 125, 175],
+  blockX: [-200, -150, -100, -50, 0, 50, 100, 150, 200],
+  blockZ: [-150, -100, -50, 0, 50, 100, 150],
+  roadWidth: 10,
+  laneOffset: 2.2,
+  beachZ0: 180,
+  beachZ1: 205,
+  seaZ: 205,
 
-  // ---- palette ----
-  palette: {
+  // Palette (hex numbers for three.js).
+  colors: {
     skyDay: 0x8ec5f0, skyDusk: 0xff9a6b, skyNight: 0x1b1f3b,
     fogDay: 0xa8c8e8, fogNight: 0x2b2f5a,
     seaDay: 0x1fb6c9, seaNight: 0x0e3a5a,
-    sand: 0xe8c47a,
-    road: 0x454a55, sidewalk: 0x9aa0a8, ground: 0x7f9c6a,
+    sand: 0xe8c47a, road: 0x454a55, sidewalk: 0x9aa0a8,
     neonPink: 0xff2d95, neonCyan: 0x00e5ff, neonAmber: 0xffb020,
     windowDay: 0x2a3442, windowNight: 0xffc46b,
-    sunDay: 0xfff2d0, sunDusk: 0xffb27a, sunNight: 0x8fa8ff,
+    grass: 0x4f9e57, pierWood: 0x8a6f4d, concrete: 0x7d838c,
   },
 
-  // ---- districts: name, building height range, building colours ----
+  // District look: building height range + facade colours.
   districts: {
     Downtown: { h: [28, 78], colors: [0x8f9bb0, 0x6b7a94, 0x5a6b84, 0x7d8aa0] },
     Midtown: { h: [12, 28], colors: [0xc9a86a, 0xb08d57, 0xa8b8c8, 0xc77e6a] },
@@ -38,101 +34,86 @@ export const CONFIG = {
     'Palma Beach': { h: [6, 12], colors: [0xffd6a5, 0xffb3c1, 0xa8e6cf, 0xfff1d6, 0xf9e79f] },
     Harbor: { h: [6, 14], colors: [0x7a8b99, 0x5f7280, 0xc77e6a] },
   },
-  // parks (no buildings): [col, row]
+  // Parks (no buildings) at block (col,row): (1,3) and (7,4).
   parks: [[1, 3], [7, 4]],
 
-  // ---- day / night ----
-  day: {
-    lengthSec: 480,
-    startTime: 0.72, // golden hour
-  },
+  // Day cycle: 480 s per full day. Start 0.72 (golden hour).
+  // t in [0,1): 0 midnight, 0.25 dawn, 0.5 noon, 0.75 dusk.
+  dayLength: 480,
+  startTime: 0.72,
 
-  // ---- player ----
+  // Player.
   player: {
-    radius: 0.45, height: 1.8,
-    walkSpeed: 4.2, sprintSpeed: 7.0,
+    radius: 0.45, height: 1.8, walk: 4.2, sprint: 7.0,
     health: 100, armor: 50,
-    startX: -25, startZ: 25,
-    startCash: 150,
     punchDamage: 12, punchRange: 2.2, punchCooldown: 0.35,
+    startX: -25, startZ: 25, startCash: 150,
   },
 
-  // ---- player car (cannon-es RaycastVehicle, arcade feel) ----
+  // Player car (cannon-es RaycastVehicle, arcade feel).
   car: {
-    mass: 1400,
-    chassisHalf: [0.95, 0.32, 2.2],
-    wheelRadius: 0.36, wheelWidth: 0.28,
-    wheelBase: 1.45, wheelTrack: 0.85,
+    mass: 1400, halfExtents: [0.95, 0.32, 2.2],
+    wheelRadius: 0.36, wheelWidth: 0.28, wheelBase: 1.45, wheelTrack: 0.85,
     suspensionStiffness: 30, suspensionRest: 0.32, suspensionTravel: 0.3,
-    suspensionMaxForce: 100000,
-    dampingRelax: 2.3, dampingCompress: 4.4,
+    maxSuspensionForce: 100000, dampingRelax: 2.3, dampingCompress: 4.4,
     frictionSlip: 1.4, rollInfluence: 0.01,
-    maxEngineForce: 4000, maxBrakeForce: 1000,
-    maxSteer: 0.55, maxSpeed: 38,
+    maxEngineForce: 4000, maxBrakeForce: 1000, maxSteer: 0.55,
+    maxSpeed: 38,
   },
 
-  // ---- car models: name, colour, speed, grip, commonness ----
+  // Car models: name, colour, speed multiplier, grip, commonness weight.
   carModels: [
-    { name: 'Driftwood Sedan', color: 0x3fa7d6, speed: 1.0, grip: 1.0, weight: 5 },
-    { name: 'Neon Taxi', color: 0xf2c94c, speed: 0.95, grip: 1.0, weight: 4 },
-    { name: 'Harbor Coupe', color: 0xe5534b, speed: 1.15, grip: 1.1, weight: 3 },
-    { name: 'Mackerel Truck', color: 0x7a8b99, speed: 0.8, grip: 0.85, weight: 2 },
-    { name: 'Pelican Van', color: 0x9b7ede, speed: 0.85, grip: 0.9, weight: 2 },
-    { name: 'Sunset Cruiser', color: 0xff8a5c, speed: 1.05, grip: 1.0, weight: 2 },
+    { name: 'Driftwood Sedan', color: 0x3fa7d6, speed: 1.0, grip: 1.0, common: 5 },
+    { name: 'Neon Taxi', color: 0xf2c94c, speed: 0.95, grip: 1.0, common: 4 },
+    { name: 'Harbor Coupe', color: 0xe5534b, speed: 1.15, grip: 1.1, common: 3 },
+    { name: 'Mackerel Truck', color: 0x7a8b99, speed: 0.8, grip: 0.85, common: 2 },
+    { name: 'Pelican Van', color: 0x9b7ede, speed: 0.85, grip: 0.9, common: 2 },
+    { name: 'Sunset Cruiser', color: 0xff8a5c, speed: 1.05, grip: 1.0, common: 2 },
   ],
   policeCar: { name: 'Harbor PD Interceptor', color: 0x22303e, speed: 1.12, grip: 1.15 },
 
-  // ---- weapons ----
+  // Weapons.
   weapons: {
-    fists: { name: 'Fists', damage: 12, range: 2.2, cooldown: 0.35, ammo: Infinity },
-    pistol: { name: 'HK-9 Pistol', damage: 34, range: 120, cooldown: 0.22, ammo: 24 },
+    fists: { damage: 12, range: 2.2, cooldown: 0.35, ammo: Infinity, name: 'Fists' },
+    pistol: { damage: 34, range: 120, cooldown: 0.22, ammo: 24, name: 'HK-9 Pistol' },
   },
 
-  // ---- wanted ----
+  // Wanted: max 5 stars. Decay 14 s with no police line of sight before a star fades.
   wanted: {
-    max: 5,
-    decaySec: 14, // no police line of sight before one star fades
-    policeCarsPerStar: [0, 1, 2, 3, 4, 5],
-    footOfficersPerStar: [0, 0, 0, 2, 3, 4],
-    unseenDrop: 2, // changing to an unseen car/outfit drops this many stars
+    max: 5, decay: 14,
+    policePerStar: [0, 1, 2, 3, 4, 5],
+    officersPerStar: [0, 0, 0, 2, 3, 4],
+    unseenDrop: 2,
   },
 
-  // ---- missions ----
-  missions: [
-    { name: 'First Fare', reward: 400, blurb: 'Drive a client across town.' },
-    { name: 'Stolen Coupe', reward: 700, blurb: 'Steal the Harbor Coupe and bring it to the garage.' },
-    { name: 'Dockside Fight', reward: 1000, blurb: 'Clear the Rust Vultures off the docks.' },
-    { name: 'Hot Package', reward: 1400, blurb: 'Pick up a package and deliver it while the police watch.' },
-    { name: 'Warehouse Payback', reward: 1900, blurb: "Hit the Vultures' warehouse." },
-    { name: 'Last Getaway', reward: 2500, blurb: "Escape to Kestrel's boat at the pier." },
-  ],
+  missionRewards: [400, 700, 1000, 1400, 1900, 2500],
 
-  // ---- counts ----
-  counts: { parked: 10, traffic: 16, peds: 14 },
-
-  // ---- save keys ----
   saveKey: 'neon-harbor-3d-save-v1',
   bestKey: 'neon-harbor-3d-best-v1',
 
-  // ---- quality tiers ----
   quality: {
     high: { pixelRatio: 2, shadow: 2048, traffic: 16, peds: 14, fogFar: 420 },
     low: { pixelRatio: 1.25, shadow: 1024, traffic: 8, peds: 8, fogFar: 300 },
   },
+
+  counts: { parked: 10, traffic: 16, peds: 14 },
+
+  // Story people.
+  people: {
+    player: 'Juno Voss',
+    boss: 'Madame Kestrel',
+    gang: 'Rust Vultures',
+    city: 'Neon Harbor',
+  },
+
+  missions: [
+    { name: 'First Fare', desc: 'Drive a client across town for Madame Kestrel.' },
+    { name: 'Stolen Coupe', desc: 'Steal the Harbor Coupe and bring it to the garage.' },
+    { name: 'Dockside Fight', desc: 'Clear the Rust Vultures off the docks.' },
+    { name: 'Hot Package', desc: 'Pick up the package and deliver it while the police are watching.' },
+    { name: 'Warehouse Payback', desc: 'Hit the Vultures\u2019 warehouse.' },
+    { name: 'Last Getaway', desc: 'Escape to Kestrel\u2019s boat at the pier.' },
+  ],
 };
 
-/** District name for a block column (0..8) and row (0..6, north to south). */
-export function districtAt(col, row) {
-  if (row >= 5) return col >= 6 ? 'Harbor' : 'Palma Beach';
-  if (col <= 2) return 'Old Town';
-  if (row <= 1) return 'Midtown';
-  if (col >= 6 && row <= 2) return 'The Yards';
-  if (col >= 3 && col <= 5 && row >= 2 && row <= 4) return 'Downtown';
-  if (col >= 6 && row >= 3 && row <= 4) return 'Midtown';
-  return 'Midtown';
-}
-
-/** True when the block (col, row) is a park (no buildings). */
-export function isPark(col, row) {
-  return CONFIG.parks.some(([c, r]) => c === col && r === row);
-}
+export default CONFIG;

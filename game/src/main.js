@@ -1,125 +1,95 @@
-// Neon Harbor 3D — boots world.js, the title screen, pause, game-over and restart.
+// Boot: creates the world, wires the title screen / pause / game-over UI,
+// and exposes a tiny debug handle (window.__neonHarbor) for verification.
 
-import { createWorld, run } from './world.js';
-import { shotFromUrl, applyShot } from './shots.js';
-import { clearSave } from './save.js';
+import { createWorld } from './world.js';
+import { getShotParams } from './shots.js';
 
 const canvas = document.getElementById('game-canvas');
-const game = createWorld({ canvas, seed: 1, quality: 'high' });
+const titleScreen = document.getElementById('title-screen');
+const pauseScreen = document.getElementById('pause-screen');
+const overScreen = document.getElementById('gameover-screen');
+const overTitle = document.getElementById('gameover-title');
+const overText = document.getElementById('gameover-text');
 
-// expose for debugging / verification (the test harness reads this)
-window.__neonHarbor = game;
+const shotParams = getShotParams();
+const isShot = !!shotParams.shot;
 
-const titleEl = document.getElementById('title-screen');
-const pauseEl = document.getElementById('pause-screen');
-const overEl = document.getElementById('gameover-screen');
-const overReason = document.getElementById('gameover-reason');
-const hudEl = document.getElementById('hud');
-const touchEl = document.getElementById('touch-controls');
+const world = createWorld(canvas, { seed: shotParams.seed || 1 });
 
-function show(el, on) {
-  if (el) el.style.display = on ? 'flex' : 'none';
+let started = false;
+
+function show(el, visible) {
+  if (el) el.style.display = visible ? 'flex' : 'none';
 }
 
-/** Start (or continue) the game from the title screen. */
 function startGame() {
-  game.state = 'playing';
-  game.paused = false;
-  show(titleEl, false);
-  show(hudEl, true);
-  if ('ontouchstart' in window) show(touchEl, true);
-  game.audio.ensure();
-  game.audio.playUi();
-  game.hud.showObjective(game.missions.label);
-  game.save();
+  if (started) return;
+  started = true;
+  show(titleScreen, false);
+  show(overScreen, false);
+  world.start();
+  world.audio.resume();
 }
 
-// title buttons
-const btnStart = document.getElementById('btn-start');
-if (btnStart) btnStart.addEventListener('click', startGame);
-const btnContinue = document.getElementById('btn-continue');
-if (btnContinue) {
-  btnContinue.addEventListener('click', startGame);
-} else if (btnStart) {
-  // no save yet: the start button is the only one
-  void 0;
-}
-const btnFresh = document.getElementById('btn-fresh');
-if (btnFresh) {
-  btnFresh.addEventListener('click', () => {
-    clearSave();
-    window.location.reload();
-  });
+function togglePause() {
+  if (!started || world.isGameOver) return;
+  const willPause = !world.isPaused;
+  world.pause(willPause);
+  show(pauseScreen, willPause);
 }
 
-// pause
-game.onPause = (paused) => {
-  show(pauseEl, paused);
-  game.audio.playUi();
-};
-const btnResume = document.getElementById('btn-resume');
-if (btnResume) btnResume.addEventListener('click', () => { game.paused = false; show(pauseEl, false); });
-const btnQuit = document.getElementById('btn-quit');
-if (btnQuit) {
-  btnQuit.addEventListener('click', () => {
-    game.save();
-    show(pauseEl, false);
-    game.state = 'title';
-    show(titleEl, true);
-    show(hudEl, false);
-  });
+function endGame(won) {
+  show(pauseScreen, false);
+  if (overTitle) overTitle.textContent = won ? 'NEON HARBOR IS YOURS' : 'BUSTED';
+  if (overText) {
+    overText.textContent = won
+      ? 'All six jobs done. Madame Kestrel owes you one — and the city knows your name.'
+      : 'The Harbor PD finally caught up with Juno Voss. The harbor never forgets.';
+  }
+  show(overScreen, true);
 }
 
-// game over
-game.onDeath = (reason) => {
-  if (overReason) overReason.textContent = reason;
-  show(overEl, true);
-  show(hudEl, false);
-};
-const btnRetry = document.getElementById('btn-retry');
-if (btnRetry) {
-  btnRetry.addEventListener('click', () => {
-    show(overEl, false);
-    game.player.health = 100;
-    game.player.pos.set(-25, 0, 25);
-    game.player.mesh.position.copy(game.player.pos);
-    game.player.mesh.visible = true;
-    if (game.player.inCar) game.exitCar();
-    game.police.wanted = 0;
-    game.state = 'playing';
-    show(hudEl, true);
-    game.hud.showObjective(game.missions.label);
-  });
+function restart() {
+  window.location.reload();
 }
 
-// screenshot staging: ?shot=cover|city|mission|combat auto-starts the game
-const shot = shotFromUrl();
-if (shot) {
-  applyShot(game, shot);
-  show(titleEl, false);
-  show(hudEl, true);
-} else {
-  game.state = 'title';
-  show(titleEl, true);
-  show(hudEl, false);
+world.onGameOver = (won) => endGame(won);
+world.onPause = () => togglePause();
+
+// Title buttons.
+const startBtn = document.getElementById('btn-start');
+if (startBtn) startBtn.addEventListener('click', startGame);
+const continueBtn = document.getElementById('btn-continue');
+if (continueBtn) {
+  continueBtn.addEventListener('click', startGame);
+}
+const resumeBtn = document.getElementById('btn-resume');
+if (resumeBtn) resumeBtn.addEventListener('click', togglePause);
+const restartBtn = document.getElementById('btn-restart');
+if (restartBtn) restartBtn.addEventListener('click', restart);
+const quitBtn = document.getElementById('btn-quit');
+if (quitBtn) quitBtn.addEventListener('click', () => window.location.reload());
+const retryBtn = document.getElementById('btn-retry');
+if (retryBtn) retryBtn.addEventListener('click', restart);
+
+// Keyboard: Enter starts from the title, R restarts after game over.
+window.addEventListener('keydown', (e) => {
+  if (e.code === 'Enter' && !started && !isShot) startGame();
+  if (e.code === 'KeyR' && world.isGameOver) restart();
+});
+
+// Shot mode: skip the title screen entirely so screenshots capture the game.
+if (isShot) {
+  started = true;
+  show(titleScreen, false);
+  world.start();
 }
 
-// best cash on the title screen
-const bestEl = document.getElementById('title-best');
-if (bestEl) bestEl.textContent = game.bestCash > 0 ? `Best cash: $${game.bestCash}` : '';
-
-// mark ready after the first frame renders (the screenshot harness waits for this)
-let readyMarked = false;
-const markReady = () => {
-  if (readyMarked) return;
-  readyMarked = true;
-  game.ready = true;
-  window.__neonHarborReady = true;
-};
-const origRender = game.renderer.render.bind(game.renderer);
-game.renderer.render = (...args) => {
-  origRender(...args);
-  markReady();
+// Debug / verification handle.
+window.__neonHarbor = {
+  world,
+  getState: () => world.getState(),
+  start: startGame,
 };
 
-run(game);
+export { world, startGame };

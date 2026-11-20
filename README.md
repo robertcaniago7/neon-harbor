@@ -44,20 +44,19 @@ wants the harbour for themselves.
 | Enter | Start the next story job |
 | Shift | Sprint |
 | Space | Brake (in a car) |
-| 1 / 2 | Fists / pistol |
+| 1 / 2 | Select fists / pistol |
 | P / Esc | Pause |
 | M | Mute |
 
 ## How it's built
 
 - **three.js r180** (pinned, vendored) for rendering: merged geometry, one
-  directional shadow, fog, capped pixel ratio. The city renders in a few dozen
-  draw calls.
+  directional shadow, fog, capped pixel ratio. The whole city renders in well
+  under 100 draw calls.
 - **cannon-es** RaycastVehicle for the player's car only. Traffic, pedestrians
-  and police are kinematic waypoint followers on a road graph (no extra physics
-  bodies).
-- **nipplejs** (vendored) for the touch joystick.
-- All sound is synthesized with WebAudio (no audio files, no licensed music).
+  and police are kinematic waypoint followers on a road graph.
+- **nipplejs** for the touch joystick.
+- All sound is synthesized with WebAudio — no audio files, no licensed music.
 - No build step, no network requests — every file the game loads lives under
   `game/`.
 
@@ -68,12 +67,15 @@ node serve.ts
 # open http://localhost:8080/
 ```
 
-## Entrypoint
+## Screenshots
 
-`main.ts` copies `game/` and `screenshots/` to `/output` (or
-`$MAKEFUN_OUTPUT_DIR`) and writes `/output/dossier.json` with the vendored
-make.fun library (`./vendor/makefun-game.ts`):
+Staged with `?shot=<name>&seed=1` (see `shots.json`):
 
-```sh
-node main.ts
-```
+1. `cover` — golden-hour downtown, Juno in a Sunset Cruiser with Harbor PD closing in.
+2. `city` — afternoon on the beach road, looking north at the Downtown skyline.
+3. `mission` — dusk at the docks, Vultures holding the corner.
+4. `combat` — night in The Yards, pistol out.
+
+## License
+
+MIT — see `LICENSE`.
