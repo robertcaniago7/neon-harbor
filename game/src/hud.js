@@ -1,170 +1,141 @@
-// HUD: cash / health / armor / weapon / speed / wanted stars / mission
-// objective, a live 2D minimap canvas, and the waypoint beacon. All DOM —
-// the 3D world only feeds it numbers.
+// Neon Harbor 3D — hud.js
+// HUD DOM (cash, health, armor, weapon, speed, wanted stars, objective) plus
+// a live 2D minimap canvas and a waypoint beacon drawn in the world.
 
-import { CONFIG } from './config.js';
+import * as THREE from '../vendor/three.module.min.js';
+import { WORLD, ROADS_X, ROADS_Z } from './config.js';
 
-export function createHUD() {
+export function createHud() {
   const el = (id) => document.getElementById(id);
-
   const cashEl = el('hud-cash');
-  const healthFill = el('hud-health-fill');
-  const healthText = el('hud-health-text');
-  const armorFill = el('hud-armor-fill');
+  const healthEl = el('hud-health');
+  const armorEl = el('hud-armor');
   const weaponEl = el('hud-weapon');
-  const ammoEl = el('hud-ammo');
   const speedEl = el('hud-speed');
   const starsEl = el('hud-stars');
-  const missionEl = el('hud-mission');
   const objectiveEl = el('hud-objective');
-  const messageEl = el('hud-message');
+  const timeEl = el('hud-time');
   const mapCanvas = el('minimap');
   const mapCtx = mapCanvas ? mapCanvas.getContext('2d') : null;
 
-  let messageTimer = null;
-
-  function showMessage(text, ms = 2600) {
-    if (!messageEl) return;
-    messageEl.textContent = text;
-    messageEl.style.opacity = '1';
-    if (messageTimer) clearTimeout(messageTimer);
-    messageTimer = setTimeout(() => {
-      messageEl.style.opacity = '0';
-    }, ms);
-  }
-
-  function setCash(n) {
-    if (cashEl) cashEl.textContent = '$' + Math.round(n).toLocaleString('en-US');
-  }
-
-  function setHealth(h, max = 100) {
-    const pct = Math.max(0, Math.min(100, (h / max) * 100));
-    if (healthFill) healthFill.style.width = pct + '%';
-    if (healthText) healthText.textContent = Math.ceil(h) + '';
-    if (healthFill) {
-      healthFill.style.background = pct > 50 ? '#37d67a' : pct > 25 ? '#f2c94c' : '#ff3b30';
-    }
-  }
-
-  function setArmor(a, max = 50) {
-    const pct = Math.max(0, Math.min(100, (a / max) * 100));
-    if (armorFill) armorFill.style.width = pct + '%';
-  }
-
-  function setWeapon(name, ammo) {
-    if (weaponEl) weaponEl.textContent = name;
-    if (ammoEl) ammoEl.textContent = ammo === Infinity ? '\u221e' : String(ammo);
-  }
-
-  function setSpeed(mps, inCar) {
-    if (!speedEl) return;
-    speedEl.textContent = inCar ? Math.round(mps * 3.6) + ' km/h' : '';
-  }
-
-  function setWanted(n) {
+  function setStars(n) {
     if (!starsEl) return;
-    const max = CONFIG.wanted.max;
     let s = '';
-    for (let i = 0; i < max; i++) s += i < n ? '\u2605' : '\u2606';
+    for (let i = 0; i < 5; i++) s += i < n ? '\u2605' : '\u2606';
     starsEl.textContent = s;
-    starsEl.style.color = n >= 3 ? '#ff3b30' : '#ffb020';
+    starsEl.style.color = n >= 3 ? '#ff2d3a' : '#ffd94c';
   }
 
-  function setMission(name, desc) {
-    if (missionEl) missionEl.textContent = name || 'Free roam';
-    if (objectiveEl) objectiveEl.textContent = desc || 'Press Enter to start the next job.';
+  function update(h) {
+    if (cashEl) cashEl.textContent = `$${Math.floor(h.cash)}`;
+    if (healthEl) {
+      healthEl.textContent = `HP ${Math.max(0, Math.ceil(h.health))}`;
+      healthEl.style.color = h.health < 30 ? '#ff2d3a' : '#ffffff';
+    }
+    if (armorEl) armorEl.textContent = `ARMOR ${Math.max(0, Math.ceil(h.armor))}`;
+    if (weaponEl) weaponEl.textContent = h.weapon || 'FISTS';
+    if (speedEl) speedEl.textContent = h.inCar ? `${Math.round(h.speedKmh)} km/h` : '';
+    if (timeEl) {
+      const hh = Math.floor(h.time * 24);
+      const mm = Math.floor((h.time * 24 - hh) * 60);
+      timeEl.textContent = `${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}`;
+    }
+    setStars(h.stars || 0);
+    if (objectiveEl) objectiveEl.textContent = h.objective || '';
+    drawMap(h);
   }
 
-  // Draw the minimap: roads as lines, player as a triangle, objective as a
-  // pulsing diamond, police as red dots, traffic as pale dots.
-  function drawMinimap(state) {
+  function drawMap(h) {
     if (!mapCtx || !mapCanvas) return;
     const W = mapCanvas.width;
     const H = mapCanvas.height;
-    const world = CONFIG.world;
-    const sx = (x) => ((x - world.minX) / (world.maxX - world.minX)) * W;
-    const sz = (z) => ((z - world.minZ) / (world.maxZ - world.minZ)) * H;
-
+    const sx = (x) => ((x - WORLD.xMin) / (WORLD.xMax - WORLD.xMin)) * W;
+    const sz = (z) => ((z - WORLD.zMin) / (WORLD.zMax - WORLD.zMin)) * H;
     mapCtx.clearRect(0, 0, W, H);
-    mapCtx.fillStyle = 'rgba(12, 18, 30, 0.82)';
+    mapCtx.fillStyle = '#1c2733';
     mapCtx.fillRect(0, 0, W, H);
-
-    // Sea + beach at the bottom.
+    // sea strip at the bottom
     mapCtx.fillStyle = '#0e3a5a';
-    mapCtx.fillRect(0, sz(CONFIG.seaZ), W, H - sz(CONFIG.seaZ));
-    mapCtx.fillStyle = '#e8c47a';
-    mapCtx.fillRect(0, sz(CONFIG.beachZ0), W, sz(CONFIG.beachZ1) - sz(CONFIG.beachZ0));
-
-    // Roads.
+    mapCtx.fillRect(0, sz(180), W, H - sz(180));
+    // roads
     mapCtx.strokeStyle = '#454a55';
-    mapCtx.lineWidth = 3;
-    for (const x of CONFIG.roadX) {
+    mapCtx.lineWidth = 2;
+    for (const x of ROADS_X) {
       mapCtx.beginPath();
       mapCtx.moveTo(sx(x), 0);
       mapCtx.lineTo(sx(x), H);
       mapCtx.stroke();
     }
-    for (const z of CONFIG.roadZ) {
+    for (const z of ROADS_Z) {
       mapCtx.beginPath();
       mapCtx.moveTo(0, sz(z));
       mapCtx.lineTo(W, sz(z));
       mapCtx.stroke();
     }
-
-    // Objective beacon (pulsing diamond).
-    if (state.objective) {
-      const pulse = 5 + Math.sin(performance.now() / 240) * 2;
-      const ox = sx(state.objective.x);
-      const oy = sz(state.objective.z);
-      mapCtx.fillStyle = '#ffb020';
+    // waypoint
+    if (h.waypoint) {
+      mapCtx.fillStyle = '#ff2d95';
       mapCtx.beginPath();
-      mapCtx.moveTo(ox, oy - pulse);
-      mapCtx.lineTo(ox + pulse, oy);
-      mapCtx.lineTo(ox, oy + pulse);
-      mapCtx.lineTo(ox - pulse, oy);
-      mapCtx.closePath();
+      mapCtx.arc(sx(h.waypoint.x), sz(h.waypoint.z), 5, 0, Math.PI * 2);
       mapCtx.fill();
+      mapCtx.strokeStyle = '#ff2d95';
+      mapCtx.beginPath();
+      mapCtx.arc(sx(h.waypoint.x), sz(h.waypoint.z), 9, 0, Math.PI * 2);
+      mapCtx.stroke();
     }
-
-    // Police (red dots).
-    if (state.police) {
-      mapCtx.fillStyle = '#ff3b30';
-      for (const p of state.police) {
+    // police dots
+    if (h.police) {
+      mapCtx.fillStyle = '#2244ff';
+      for (const p of h.police) {
         mapCtx.beginPath();
-        mapCtx.arc(sx(p.x), sz(p.z), 3, 0, Math.PI * 2);
+        mapCtx.arc(sx(p.x), sz(p.z), 2.5, 0, Math.PI * 2);
         mapCtx.fill();
       }
     }
-
-    // Traffic (pale dots).
-    if (state.traffic) {
-      mapCtx.fillStyle = 'rgba(220, 225, 235, 0.75)';
-      for (const t of state.traffic) {
-        mapCtx.fillRect(sx(t.x) - 1.5, sz(t.z) - 1.5, 3, 3);
-      }
-    }
-
-    // Player (triangle pointing along heading).
-    if (state.player) {
-      const px = sx(state.player.x);
-      const py = sz(state.player.z);
-      const h = state.player.heading || 0;
-      const dx = Math.sin(h);
-      const dz = Math.cos(h);
-      mapCtx.fillStyle = state.player.inCar ? '#00e5ff' : '#ffffff';
+    // player arrow
+    if (h.player) {
+      mapCtx.save();
+      mapCtx.translate(sx(h.player.x), sz(h.player.z));
+      mapCtx.rotate(h.player.yaw || 0);
+      mapCtx.fillStyle = '#ffffff';
       mapCtx.beginPath();
-      mapCtx.moveTo(px + dx * 7, py + dz * 7);
-      mapCtx.lineTo(px - dz * 5 - dx * 4, py + dx * 5 - dz * 4);
-      mapCtx.lineTo(px + dz * 5 - dx * 4, py - dx * 5 - dz * 4);
+      mapCtx.moveTo(0, -6);
+      mapCtx.lineTo(4, 5);
+      mapCtx.lineTo(-4, 5);
       mapCtx.closePath();
       mapCtx.fill();
+      mapCtx.restore();
     }
   }
 
-  return {
-    showMessage, setCash, setHealth, setArmor, setWeapon, setSpeed,
-    setWanted, setMission, drawMinimap,
-  };
-}
+  // A tall glowing beacon column at the waypoint, visible across the city.
+  function createBeacon(scene) {
+    const geo = new THREE.CylinderGeometry(1.2, 1.2, 90, 12, 1, true);
+    const mat = new THREE.MeshBasicMaterial({
+      color: 0xff2d95, transparent: true, opacity: 0.35, side: THREE.DoubleSide, depthWrite: false,
+    });
+    const mesh = new THREE.Mesh(geo, mat);
+    mesh.position.y = 45;
+    mesh.visible = false;
+    scene.add(mesh);
+    const ring = new THREE.Mesh(
+      new THREE.RingGeometry(2, 3.4, 24),
+      new THREE.MeshBasicMaterial({ color: 0xff2d95, transparent: true, opacity: 0.7, side: THREE.DoubleSide })
+    );
+    ring.rotation.x = -Math.PI / 2;
+    ring.position.y = 0.15;
+    ring.visible = false;
+    scene.add(ring);
+    function set(x, z, visible) {
+      mesh.position.x = x;
+      mesh.position.z = z;
+      mesh.visible = visible;
+      ring.position.x = x;
+      ring.position.z = z;
+      ring.visible = visible;
+    }
+    return { mesh, ring, set };
+  }
 
-export default createHUD;
+  return { update, setStars, createBeacon };
+}

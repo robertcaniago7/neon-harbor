@@ -1,95 +1,76 @@
-// Boot: creates the world, wires the title screen / pause / game-over UI,
-// and exposes a tiny debug handle (window.__neonHarbor) for verification.
+// Neon Harbor 3D — main.js
+// Boots world.js: title screen, pause, game-over, restart. Exposes the world
+// on window for debugging and for the screenshot harness.
 
 import { createWorld } from './world.js';
-import { getShotParams } from './shots.js';
+import { createInput } from './input.js';
+import { loadSave } from './save.js';
 
 const canvas = document.getElementById('game-canvas');
-const titleScreen = document.getElementById('title-screen');
-const pauseScreen = document.getElementById('pause-screen');
-const overScreen = document.getElementById('gameover-screen');
-const overTitle = document.getElementById('gameover-title');
+const input = createInput(canvas);
+const world = createWorld({ canvas, input });
+
+window.__neonHarbor = world;
+
+const titleEl = document.getElementById('title-screen');
+const startBtn = document.getElementById('btn-start');
+const continueBtn = document.getElementById('btn-continue');
+const pauseEl = document.getElementById('pause-screen');
+const overEl = document.getElementById('gameover-screen');
 const overText = document.getElementById('gameover-text');
+const restartBtn = document.getElementById('btn-restart');
+const resumeBtn = document.getElementById('btn-resume');
 
-const shotParams = getShotParams();
-const isShot = !!shotParams.shot;
+const saved = loadSave();
+const isShot = new URLSearchParams(window.location.search).has('shot');
 
-const world = createWorld(canvas, { seed: shotParams.seed || 1 });
+function hide(el) { if (el) el.style.display = 'none'; }
+function show(el) { if (el) el.style.display = 'flex'; }
 
-let started = false;
-
-function show(el, visible) {
-  if (el) el.style.display = visible ? 'flex' : 'none';
-}
-
-function startGame() {
-  if (started) return;
-  started = true;
-  show(titleScreen, false);
-  show(overScreen, false);
+function beginGame() {
+  hide(titleEl);
+  hide(overEl);
   world.start();
   world.audio.resume();
 }
 
-function togglePause() {
-  if (!started || world.isGameOver) return;
-  const willPause = !world.isPaused;
-  world.pause(willPause);
-  show(pauseScreen, willPause);
-}
-
-function endGame(won) {
-  show(pauseScreen, false);
-  if (overTitle) overTitle.textContent = won ? 'NEON HARBOR IS YOURS' : 'BUSTED';
-  if (overText) {
-    overText.textContent = won
-      ? 'All six jobs done. Madame Kestrel owes you one — and the city knows your name.'
-      : 'The Harbor PD finally caught up with Juno Voss. The harbor never forgets.';
-  }
-  show(overScreen, true);
-}
-
-function restart() {
-  window.location.reload();
-}
-
-world.onGameOver = (won) => endGame(won);
-world.onPause = () => togglePause();
-
-// Title buttons.
-const startBtn = document.getElementById('btn-start');
-if (startBtn) startBtn.addEventListener('click', startGame);
-const continueBtn = document.getElementById('btn-continue');
+if (startBtn) startBtn.addEventListener('click', () => { beginGame(); });
 if (continueBtn) {
-  continueBtn.addEventListener('click', startGame);
+  if (saved && saved.mission > 0) {
+    continueBtn.style.display = 'block';
+    continueBtn.textContent = `Continue — Job ${saved.mission + 1} ($${saved.cash})`;
+  }
+  continueBtn.addEventListener('click', () => { beginGame(); });
 }
-const resumeBtn = document.getElementById('btn-resume');
-if (resumeBtn) resumeBtn.addEventListener('click', togglePause);
-const restartBtn = document.getElementById('btn-restart');
-if (restartBtn) restartBtn.addEventListener('click', restart);
-const quitBtn = document.getElementById('btn-quit');
-if (quitBtn) quitBtn.addEventListener('click', () => window.location.reload());
-const retryBtn = document.getElementById('btn-retry');
-if (retryBtn) retryBtn.addEventListener('click', restart);
-
-// Keyboard: Enter starts from the title, R restarts after game over.
-window.addEventListener('keydown', (e) => {
-  if (e.code === 'Enter' && !started && !isShot) startGame();
-  if (e.code === 'KeyR' && world.isGameOver) restart();
+if (restartBtn) restartBtn.addEventListener('click', () => {
+  window.location.reload();
+});
+if (resumeBtn) resumeBtn.addEventListener('click', () => {
+  world.paused = false;
+  hide(pauseEl);
 });
 
-// Shot mode: skip the title screen entirely so screenshots capture the game.
+// In shot mode there is no title screen: the game runs immediately so the
+// screenshot harness captures the staged scene.
 if (isShot) {
-  started = true;
-  show(titleScreen, false);
+  hide(titleEl);
   world.start();
+} else {
+  show(titleEl);
 }
 
-// Debug / verification handle.
-window.__neonHarbor = {
-  world,
-  getState: () => world.getState(),
-  start: startGame,
-};
+// Watch for pause / game over once a second.
+setInterval(() => {
+  if (world.paused) {
+    show(pauseEl);
+  } else {
+    hide(pauseEl);
+  }
+  if (world.player.dead && !isShot) {
+    if (overText) overText.textContent = `Busted flat in ${'Neon Harbor'}. Juno is down — the harbour keeps its secrets. Cash kept: $${Math.floor(world.player.cash)}.`;
+    show(overEl);
+    world.stop();
+  }
+}, 500);
 
-export { world, startGame };
+export { world };

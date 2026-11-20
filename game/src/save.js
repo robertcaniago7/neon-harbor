@@ -1,60 +1,62 @@
-// localStorage save/load: progress, cash, best score.
-// Keys are fixed by the spec so a save survives a reload.
+// Neon Harbor 3D — save.js
+// localStorage save/load: progress, cash, best run. Versioned keys so an old
+// save never crashes a new build.
 
-import { CONFIG } from './config.js';
+import { SAVE_KEYS } from './config.js';
 
-const SAVE_KEY = CONFIG.saveKey;
-const BEST_KEY = CONFIG.bestKey;
-
-function safeParse(text) {
+function safeParse(raw) {
   try {
-    return JSON.parse(text);
+    return JSON.parse(raw);
   } catch (e) {
     return null;
   }
 }
 
-// Load the save object, or null when there is none / it is corrupt.
 export function loadSave() {
   try {
-    const raw = window.localStorage.getItem(SAVE_KEY);
+    const raw = localStorage.getItem(SAVE_KEYS.save);
     if (!raw) return null;
     const data = safeParse(raw);
     if (!data || typeof data !== 'object') return null;
     return {
       mission: Number.isFinite(data.mission) ? data.mission : 0,
-      cash: Number.isFinite(data.cash) ? data.cash : CONFIG.player.startCash,
-      health: Number.isFinite(data.health) ? data.health : CONFIG.player.health,
-      best: Number.isFinite(data.best) ? data.best : 0,
-      completed: Array.isArray(data.completed) ? data.completed : [],
+      cash: Number.isFinite(data.cash) ? data.cash : 150,
+      health: Number.isFinite(data.health) ? data.health : 100,
+      armor: Number.isFinite(data.armor) ? data.armor : 50,
+      time: Number.isFinite(data.time) ? data.time : 0.72,
+      playedAt: data.playedAt || 0,
     };
   } catch (e) {
     return null;
   }
 }
 
-// Write the save object. Returns true on success.
 export function writeSave(data) {
   try {
     const payload = {
-      mission: data.mission | 0,
-      cash: Math.max(0, Math.round(data.cash || 0)),
-      health: Math.max(0, Math.round(data.health || 0)),
-      best: Math.max(0, Math.round(data.best || 0)),
-      completed: Array.isArray(data.completed) ? data.completed : [],
-      savedAt: Date.now(),
+      mission: data.mission || 0,
+      cash: data.cash || 0,
+      health: data.health || 100,
+      armor: data.armor || 0,
+      time: data.time || 0.72,
+      playedAt: Date.now(),
     };
-    window.localStorage.setItem(SAVE_KEY, JSON.stringify(payload));
+    localStorage.setItem(SAVE_KEYS.save, JSON.stringify(payload));
     return true;
   } catch (e) {
     return false;
   }
 }
 
-// Best (highest cash earned in one run) is kept under its own key too.
+export function clearSave() {
+  try {
+    localStorage.removeItem(SAVE_KEYS.save);
+  } catch (e) { /* storage unavailable */ }
+}
+
 export function loadBest() {
   try {
-    const raw = window.localStorage.getItem(BEST_KEY);
+    const raw = localStorage.getItem(SAVE_KEYS.best);
     const n = raw === null ? 0 : parseInt(raw, 10);
     return Number.isFinite(n) ? n : 0;
   } catch (e) {
@@ -62,23 +64,12 @@ export function loadBest() {
   }
 }
 
-export function writeBest(value) {
+export function writeBest(cash) {
   try {
-    window.localStorage.setItem(BEST_KEY, String(Math.max(0, Math.round(value))));
-    return true;
+    const prev = loadBest();
+    if (cash > prev) localStorage.setItem(SAVE_KEYS.best, String(Math.floor(cash)));
+    return Math.max(prev, Math.floor(cash));
   } catch (e) {
-    return false;
+    return cash;
   }
 }
-
-// Remove the save entirely (used by the "new game" path).
-export function clearSave() {
-  try {
-    window.localStorage.removeItem(SAVE_KEY);
-    return true;
-  } catch (e) {
-    return false;
-  }
-}
-
-export default { loadSave, writeSave, loadBest, writeBest, clearSave };

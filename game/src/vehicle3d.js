@@ -1,127 +1,100 @@
-// Car meshes: body, cabin, wheels, headlights, tail lights.
-// One builder for every car model; police cars get a light bar + livery stripe.
+// Neon Harbor 3D — vehicle3d.js
+// Builds car meshes: body, cabin, wheels, headlights. One builder per model,
+// with a police variant (light bar + dark livery).
 
-import * as THREE from 'three';
+import * as THREE from '../vendor/three.module.min.js';
+import { CAR_PHYSICS } from './config.js';
 
-const BODY_MAT_CACHE = new Map();
-const DARK_MAT = new THREE.MeshStandardMaterial({ color: 0x11151c, roughness: 0.35, metalness: 0.6 });
-const GLASS_MAT = new THREE.MeshStandardMaterial({ color: 0x9fd4e8, roughness: 0.1, metalness: 0.9 });
-const TYRE_MAT = new THREE.MeshStandardMaterial({ color: 0x141414, roughness: 0.95 });
-const HUB_MAT = new THREE.MeshStandardMaterial({ color: 0xb9c0c8, roughness: 0.3, metalness: 0.85 });
-const LIGHT_FRONT_MAT = new THREE.MeshStandardMaterial({ color: 0xfff6c9, emissive: 0xffedb5, emissiveIntensity: 1.6 });
-const LIGHT_REAR_MAT = new THREE.MeshStandardMaterial({ color: 0xff2a22, emissive: 0xd2100a, emissiveIntensity: 1.2 });
-const POLICE_WHITE = new THREE.MeshStandardMaterial({ color: 0xf2f4f6, roughness: 0.4, metalness: 0.3 });
-
-function bodyMaterial(color) {
-  if (!BODY_MAT_CACHE.has(color)) {
-    BODY_MAT_CACHE.set(color, new THREE.MeshStandardMaterial({
-      color, roughness: 0.32, metalness: 0.55,
-    }));
-  }
-  return BODY_MAT_CACHE.get(color);
-}
-
-function box(w, h, d, mat, x, y, z) {
-  const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
-  m.position.set(x, y, z);
-  m.castShadow = true;
-  return m;
-}
-
-function wheel(r, w) {
-  const g = new THREE.Group();
-  const tyre = new THREE.Mesh(new THREE.CylinderGeometry(r, r, w, 14), TYRE_MAT);
-  tyre.rotation.z = Math.PI / 2;
-  tyre.castShadow = true;
-  const hub = new THREE.Mesh(new THREE.CylinderGeometry(r * 0.55, r * 0.55, w + 0.02, 10), HUB_MAT);
-  hub.rotation.z = Math.PI / 2;
-  g.add(tyre, hub);
-  return g;
-}
-
-// Build a car mesh. `model` is { name, color, speed, grip }.
-// Options: { police: true } adds a light bar and white doors.
-// Returns { group, wheels: [4 wheel groups], body } — wheels spin by index:
-// [front-left, front-right, rear-left, rear-right].
-export function buildCarMesh(model, opts = {}) {
+export function buildCarMesh(model, isPolice = false) {
   const group = new THREE.Group();
-  const isTruck = /Truck|Van/i.test(model.name);
-  const len = isTruck ? 5.4 : 4.4;
-  const wid = isTruck ? 2.1 : 1.9;
-  const bodyH = isTruck ? 0.85 : 0.55;
-  const bodyY = isTruck ? 0.78 : 0.55;
-  const mat = bodyMaterial(model.color);
+  const bodyColor = isPolice ? 0x22303e : model.color;
 
-  // Main body + nose taper (a slightly smaller front box reads as a hood).
-  const body = box(wid, bodyH, len, mat, 0, bodyY, 0);
+  const body = new THREE.Mesh(
+    new THREE.BoxGeometry(1.9, 0.62, 4.4),
+    new THREE.MeshLambertMaterial({ color: bodyColor })
+  );
+  body.position.y = 0.62;
+  body.castShadow = true;
   group.add(body);
-  const hood = box(wid * 0.94, bodyH * 0.62, len * 0.24, mat, 0, bodyY - 0.04, len * 0.4);
+
+  const cabin = new THREE.Mesh(
+    new THREE.BoxGeometry(1.6, 0.55, 2.2),
+    new THREE.MeshLambertMaterial({ color: 0x1c2733 })
+  );
+  cabin.position.set(0, 1.18, -0.2);
+  cabin.castShadow = true;
+  group.add(cabin);
+
+  // hood + trunk hints
+  const hood = new THREE.Mesh(
+    new THREE.BoxGeometry(1.7, 0.18, 1.0),
+    new THREE.MeshLambertMaterial({ color: bodyColor })
+  );
+  hood.position.set(0, 0.98, 1.6);
   group.add(hood);
 
-  // Cabin / cargo box.
-  if (isTruck) {
-    const cargo = box(wid * 0.96, 1.05, len * 0.42, mat, 0, bodyY + 0.85, -len * 0.2);
-    group.add(cargo);
-    const cab = box(wid * 0.92, 0.7, len * 0.26, GLASS_MAT, 0, bodyY + 0.75, len * 0.22);
-    group.add(cab);
-  } else {
-    const cabin = box(wid * 0.82, 0.5, len * 0.46, GLASS_MAT, 0, bodyY + bodyH / 2 + 0.22, -len * 0.06);
-    group.add(cabin);
-    const roof = box(wid * 0.8, 0.07, len * 0.42, mat, 0, bodyY + bodyH / 2 + 0.5, -len * 0.06);
-    group.add(roof);
+  // headlights (two bright quads at the front)
+  const lightMat = new THREE.MeshBasicMaterial({ color: 0xfff2b0 });
+  for (const sx of [-0.6, 0.6]) {
+    const hl = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.16, 0.1), lightMat);
+    hl.position.set(sx, 0.72, 2.21);
+    group.add(hl);
+  }
+  // taillights
+  const tailMat = new THREE.MeshBasicMaterial({ color: 0xff2d3a });
+  for (const sx of [-0.6, 0.6]) {
+    const tl = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.14, 0.1), tailMat);
+    tl.position.set(sx, 0.72, -2.21);
+    group.add(tl);
   }
 
-  // Bumpers.
-  group.add(box(wid * 1.02, 0.18, 0.22, DARK_MAT, 0, 0.32, len / 2));
-  group.add(box(wid * 1.02, 0.18, 0.22, DARK_MAT, 0, 0.32, -len / 2));
-
-  // Headlights + tail lights.
-  const hlZ = len / 2 + 0.02;
-  group.add(box(0.34, 0.14, 0.06, LIGHT_FRONT_MAT, -wid * 0.32, 0.62, hlZ));
-  group.add(box(0.34, 0.14, 0.06, LIGHT_FRONT_MAT, wid * 0.32, 0.62, hlZ));
-  group.add(box(0.34, 0.12, 0.06, LIGHT_REAR_MAT, -wid * 0.32, 0.62, -hlZ));
-  group.add(box(0.34, 0.12, 0.06, LIGHT_REAR_MAT, wid * 0.32, 0.62, -hlZ));
-
-  // Wheels.
-  const wheelR = 0.36;
-  const wheelW = 0.28;
-  const fx = len * 0.32;
-  const wx = wid / 2 + 0.02;
-  const wheels = [
-    wheel(wheelR, wheelW), wheel(wheelR, wheelW),
-    wheel(wheelR, wheelW), wheel(wheelR, wheelW),
-  ];
-  wheels[0].position.set(-wx, wheelR, fx);
-  wheels[1].position.set(wx, wheelR, fx);
-  wheels[2].position.set(-wx, wheelR, -fx);
-  wheels[3].position.set(wx, wheelR, -fx);
-  wheels.forEach((w) => group.add(w));
-
-  // Police livery: white doors + roof light bar.
-  let lightBar = null;
-  if (opts.police) {
-    const doorL = box(0.04, 0.4, len * 0.34, POLICE_WHITE, -wid / 2 - 0.01, 0.62, -len * 0.04);
-    const doorR = box(0.04, 0.4, len * 0.34, POLICE_WHITE, wid / 2 + 0.01, 0.62, -len * 0.04);
-    group.add(doorL, doorR);
-    lightBar = new THREE.Group();
-    const barBase = box(0.9, 0.09, 0.3, DARK_MAT, 0, 0, 0);
-    const red = new THREE.Mesh(new THREE.BoxGeometry(0.36, 0.12, 0.26),
-      new THREE.MeshStandardMaterial({ color: 0xff2020, emissive: 0xff1010, emissiveIntensity: 2 }));
-    red.position.x = -0.24;
-    const blue = new THREE.Mesh(new THREE.BoxGeometry(0.36, 0.12, 0.26),
-      new THREE.MeshStandardMaterial({ color: 0x2040ff, emissive: 0x1020ff, emissiveIntensity: 2 }));
-    blue.position.x = 0.24;
-    lightBar.add(barBase, red, blue);
-    lightBar.position.set(0, bodyY + bodyH / 2 + 0.56, -len * 0.06);
-    lightBar.userData.red = red;
-    lightBar.userData.blue = blue;
-    group.add(lightBar);
+  if (isPolice) {
+    // light bar on the roof
+    const bar = new THREE.Mesh(
+      new THREE.BoxGeometry(1.2, 0.18, 0.4),
+      new THREE.MeshLambertMaterial({ color: 0x111111 })
+    );
+    bar.position.set(0, 1.55, -0.2);
+    group.add(bar);
+    const red = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.16, 0.42), new THREE.MeshBasicMaterial({ color: 0xff2222 }));
+    red.position.set(-0.32, 1.56, -0.2);
+    const blue = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.16, 0.42), new THREE.MeshBasicMaterial({ color: 0x2244ff }));
+    blue.position.set(0.32, 1.56, -0.2);
+    group.add(red, blue);
+    // white doors stripe
+    const stripe = new THREE.Mesh(
+      new THREE.BoxGeometry(1.92, 0.3, 2.0),
+      new THREE.MeshLambertMaterial({ color: 0xf5f5f0 })
+    );
+    stripe.position.set(0, 0.62, -0.1);
+    group.add(stripe);
   }
 
-  group.userData.length = len;
-  group.userData.width = wid;
+  // wheels (visual only; physics wheels are separate objects)
+  const wheelGeo = new THREE.CylinderGeometry(CAR_PHYSICS.wheelRadius, CAR_PHYSICS.wheelRadius, CAR_PHYSICS.wheelWidth, 12);
+  wheelGeo.rotateZ(Math.PI / 2);
+  const wheelMat = new THREE.MeshLambertMaterial({ color: 0x14181d });
+  const wheels = [];
+  const wx = CAR_PHYSICS.wheelTrack;
+  const wz = CAR_PHYSICS.wheelBase;
+  for (const [x, z] of [[-wx, wz], [wx, wz], [-wx, -wz], [wx, -wz]]) {
+    const w = new THREE.Mesh(wheelGeo, wheelMat);
+    w.position.set(x, CAR_PHYSICS.wheelRadius, z);
+    w.castShadow = true;
+    group.add(w);
+    wheels.push(w);
+  }
+
   group.userData.wheels = wheels;
-  return { group, wheels, body, lightBar };
+  return group;
 }
 
-export default buildCarMesh;
+// Steer the front wheels and spin all wheels by distance travelled.
+export function animateCarWheels(mesh, steerAngle, distance) {
+  const wheels = mesh.userData.wheels || [];
+  wheels.forEach((w, i) => {
+    const isFront = i < 2;
+    w.rotation.y = isFront ? steerAngle : 0;
+    w.rotation.x += distance / CAR_PHYSICS.wheelRadius;
+  });
+}

@@ -1,20 +1,27 @@
-// Day/night cycle: sun + moon, sky colour, fog, and how bright the street
-// lights and neon signs burn. Time t in [0,1): 0 midnight, 0.25 dawn,
-// 0.5 noon, 0.75 dusk. Day length is 480 s per full day.
+// Neon Harbor 3D — daynight.js
+// Sun/moon, sky colour, fog, streetlight and neon intensity by time of day.
+// Time t in [0,1): 0 = midnight, 0.25 = dawn, 0.5 = noon, 0.75 = dusk.
 
-import * as THREE from 'three';
-import { CONFIG } from './config.js';
+import * as THREE from '../vendor/three.module.min.js';
+import { PALETTE } from './config.js';
 
-const C = CONFIG.colors;
-
-// Small helper: lerp between two hex colours.
-function lerpColor(a, b, t, out) {
-  out.setHex(a);
-  out.lerp(new THREE.Color(b), t);
-  return out;
+function lerpColor(a, b, f) {
+  const ca = new THREE.Color(a);
+  const cb = new THREE.Color(b);
+  return ca.lerp(cb, f);
 }
 
-export function createDayNight(scene, renderer) {
+// Sun height: 0 at midnight, 1 at noon, back to 0 at midnight.
+export function sunHeight(t) {
+  return Math.sin(t * Math.PI * 2 - Math.PI / 2) * 0.5 + 0.5;
+}
+
+export function isNight(t) {
+  const h = sunHeight(t);
+  return h < 0.25;
+}
+
+export function createDayNight(scene) {
   const sun = new THREE.DirectionalLight(0xffffff, 2.2);
   sun.castShadow = true;
   sun.shadow.mapSize.set(2048, 2048);
@@ -22,102 +29,58 @@ export function createDayNight(scene, renderer) {
   sun.shadow.camera.right = 260;
   sun.shadow.camera.top = 260;
   sun.shadow.camera.bottom = -260;
-  sun.shadow.camera.far = 700;
-  sun.shadow.bias = -0.0004;
+  sun.shadow.camera.far = 800;
+  sun.shadow.bias = -0.0005;
   scene.add(sun);
   scene.add(sun.target);
 
   const moon = new THREE.DirectionalLight(0x8fa8ff, 0.35);
+  moon.position.set(-80, 120, -60);
   scene.add(moon);
-  scene.add(moon.target);
 
-  const hemi = new THREE.HemisphereLight(0xbfd9ff, 0x3a3f4a, 0.9);
+  const hemi = new THREE.HemisphereLight(0xbfd9ff, 0x5a6b7a, 0.9);
   scene.add(hemi);
 
-  const ambient = new THREE.AmbientLight(0xffffff, 0.25);
-  scene.add(ambient);
-
-  // Street-light glow points are plain emissive sprites in the city mesh;
-  // this light is a soft warm wash that fades in at night.
-  const nightWash = new THREE.PointLight(0xffb020, 0, 300, 1.2);
-  nightWash.position.set(0, 60, 0);
-  scene.add(nightWash);
-
-  const skyColor = new THREE.Color(C.skyDay);
-  const fogColor = new THREE.Color(C.fogDay);
-  scene.background = skyColor;
-  scene.fog = new THREE.Fog(fogColor.getHex(), 60, 420);
-
-  let time = CONFIG.startTime;
-
-  // How "day" it is: 1 at noon, 0 at midnight, smooth in between.
-  function daylight(t) {
-    // cos curve peaking at t = 0.5 (noon).
-    return Math.max(0, Math.cos((t - 0.5) * Math.PI * 2) * 0.5 + 0.5);
-  }
-
-  function update(dt, quality) {
-    time = (time + dt / CONFIG.dayLength) % 1;
-    const dl = daylight(time);
-    const dusk = Math.max(0, 1 - Math.abs(time - 0.75) * 6) * (1 - dl * 0.4);
-    const dawn = Math.max(0, 1 - Math.abs(time - 0.25) * 6) * (1 - dl * 0.4);
-
-    // Sun position arcs across the sky.
-    const sunAngle = (time - 0.25) * Math.PI * 2;
-    const sunH = Math.sin(sunAngle);
-    sun.position.set(Math.cos(sunAngle) * 320, Math.max(20, sunH * 300), 140);
-    sun.target.position.set(0, 0, 0);
-    sun.intensity = 0.15 + 2.1 * dl;
-    sun.visible = sunH > -0.08;
-
-    // Moon opposite the sun.
-    const moonAngle = sunAngle + Math.PI;
-    moon.position.set(Math.cos(moonAngle) * 300, Math.max(30, Math.sin(moonAngle) * 260), -120);
-    moon.target.position.set(0, 0, 0);
-    moon.intensity = 0.1 + 0.4 * (1 - dl);
-
-    hemi.intensity = 0.25 + 0.75 * dl;
-    ambient.intensity = 0.12 + 0.18 * dl;
-
-    // Sky: day blue -> dusk orange -> night deep blue.
-    if (dl > 0.55) {
-      lerpColor(C.skyDay, C.skyDusk, Math.max(0, (0.95 - dl) * 2.2), skyColor);
-    } else if (dusk > 0.05 || dawn > 0.05) {
-      skyColor.setHex(C.skyDusk);
-      skyColor.lerp(new THREE.Color(C.skyNight), Math.max(0, 1 - Math.max(dusk, dawn)));
-    } else {
-      skyColor.setHex(C.skyNight);
+  // a few streetlights that switch on at night
+  const streetlights = [];
+  const lampMat = new THREE.MeshBasicMaterial({ color: 0xffe9a8 });
+  for (const x of [-175, -75, 25, 125, 225]) {
+    for (const z of [-125, -25, 75, 175]) {
+      const pole = new THREE.Mesh(
+        new THREE.BoxGeometry(0.25, 6, 0.25),
+        new THREE.MeshLambertMaterial({ color: 0x2a3442 })
+      );
+      pole.position.set(x + 6, 3, z + 6);
+      const lamp = new THREE.Mesh(new THREE.SphereGeometry(0.5, 8, 6), lampMat);
+      lamp.position.set(x + 6, 6.2, z + 6);
+      lamp.visible = false;
+      scene.add(pole, lamp);
+      streetlights.push(lamp);
     }
-    scene.background = skyColor;
-
-    // Fog follows the sky.
-    lerpColor(C.fogDay, C.fogNight, 1 - dl, fogColor);
-    scene.fog.color.copy(fogColor);
-    scene.fog.far = (quality && quality.fogFar) || 420;
-
-    // Neon + street lights burn brightest at night.
-    const neonLevel = 1 - dl * 0.75;
-    nightWash.intensity = (1 - dl) * 900;
-
-    // Sea colour shifts with daylight too (the city mesh reads this).
-    const sea = new THREE.Color(C.seaDay).lerp(new THREE.Color(C.seaNight), 1 - dl);
-
-    return {
-      time, daylight: dl, dusk, dawn,
-      neonLevel, seaColor: sea.getHex(),
-      isNight: dl < 0.25,
-    };
   }
 
-  function setTime(t) {
-    time = ((t % 1) + 1) % 1;
+  function update(t, fogFar) {
+    const h = sunHeight(t);
+    // sky: night -> dawn -> day -> dusk -> night
+    let sky;
+    if (h > 0.75) sky = PALETTE.skyDay;
+    else if (h > 0.45) sky = lerpColor(PALETTE.skyDusk, PALETTE.skyDay, (h - 0.45) / 0.3).getHex();
+    else if (h > 0.2) sky = lerpColor(PALETTE.skyNight, PALETTE.skyDusk, (h - 0.2) / 0.25).getHex();
+    else sky = PALETTE.skyNight;
+    scene.background = new THREE.Color(sky);
+    scene.fog = new THREE.Fog(h > 0.4 ? PALETTE.fogDay : PALETTE.fogNight, 60, fogFar);
+
+    // sun position follows the day arc
+    const ang = t * Math.PI * 2;
+    sun.position.set(Math.cos(ang) * 300, Math.sin(ang) * 260 + 40, 120);
+    sun.intensity = 0.4 + h * 2.0;
+    moon.intensity = h < 0.25 ? 0.5 : 0.05;
+    hemi.intensity = 0.4 + h * 0.7;
+
+    const night = h < 0.3;
+    for (const lamp of streetlights) lamp.visible = night;
+    return { sunHeight: h, night };
   }
 
-  function getTime() {
-    return time;
-  }
-
-  return { update, setTime, getTime, sun, moon };
+  return { sun, moon, hemi, streetlights, update };
 }
-
-export default createDayNight;

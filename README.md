@@ -14,9 +14,10 @@ You are **Juno Voss**, a getaway driver in **Neon Harbor**, a sun-soaked port
 city. You owe **Madame Kestrel** one last favour, and the **Rust Vultures** gang
 wants the harbour for themselves.
 
-- **A 3D city** — six districts, a beach and a sea to the south, palms, piers,
-  neon signs, and a full day/night cycle: bright days, golden-hour dusk,
-  magenta-cyan neon nights.
+- **A 3D city** — six districts (Downtown, Midtown, Old Town, The Yards, Palma
+  Beach, Harbor), a beach and a sea to the south, palms, piers, neon signs,
+  and a full day/night cycle: bright days, golden-hour dusk, magenta-cyan
+  neon nights.
 - **Third-person on foot and by car** — walk, sprint, punch, shoot; steal any
   parked car (F) and drive it with arcade physics.
 - **Wanted level** — five stars. Police interceptors chase along the road graph
@@ -44,15 +45,15 @@ wants the harbour for themselves.
 | Enter | Start the next story job |
 | Shift | Sprint |
 | Space | Brake (in a car) |
-| 1 / 2 | Select fists / pistol |
+| 1 / 2 | Fists / HK-9 pistol |
 | P / Esc | Pause |
 | M | Mute |
 
 ## How it's built
 
-- **three.js r180** (pinned, vendored) for rendering: merged geometry, one
-  directional shadow, fog, capped pixel ratio. The whole city renders in well
-  under 100 draw calls.
+- **three.js r180** (vendored) for rendering: merged/instanced geometry, one
+  directional shadow, fog, capped pixel ratio. The city renders in well under
+  100 draw calls.
 - **cannon-es** RaycastVehicle for the player's car only. Traffic, pedestrians
   and police are kinematic waypoint followers on a road graph.
 - **nipplejs** for the touch joystick.
@@ -60,22 +61,14 @@ wants the harbour for themselves.
 - No build step, no network requests — every file the game loads lives under
   `game/`.
 
-## Run it
-
-```sh
-node serve.ts
-# open http://localhost:8080/
-```
+Run it locally with `node serve.ts` (port 8080), then open
+http://localhost:8080/ in a browser.
 
 ## Screenshots
 
 Staged with `?shot=<name>&seed=1` (see `shots.json`):
 
-1. `cover` — golden-hour downtown, Juno in a Sunset Cruiser with Harbor PD closing in.
-2. `city` — afternoon on the beach road, looking north at the Downtown skyline.
-3. `mission` — dusk at the docks, Vultures holding the corner.
-4. `combat` — night in The Yards, pistol out.
-
-## License
-
-MIT — see `LICENSE`.
+1. **cover** — golden-hour downtown, Juno in a Sunset Cruiser with Harbor PD closing in.
+2. **city** — afternoon on the beach road, looking north at the Downtown skyline.
+3. **mission** — dusk at the docks, Vultures holding the corner.
+4. **combat** — night in The Yards, pistol out.

@@ -1,100 +1,93 @@
-// Character meshes: simple articulated low-poly people.
-// Player (Juno) is a distinct jacket + dark hair; pedestrians vary by palette;
-// gang members wear rust-red; police wear navy with a cap.
+// Neon Harbor 3D — character.js
+// Builds low-poly pedestrian / player character meshes: legs, torso, head,
+// arms, with a simple walk swing. One mesh per person, cheap and readable.
 
-import * as THREE from 'three';
+import * as THREE from '../vendor/three.module.min.js';
+import { PLAYER } from './config.js';
 
-function mat(color, rough = 0.8) {
-  return new THREE.MeshStandardMaterial({ color, roughness: rough, metalness: 0.05 });
-}
+const SKINS = [0xf2c9a0, 0xc98d5f, 0x8a5a3b, 0xe8b88a];
+const SHIRTS = [0xff2d95, 0x00e5ff, 0xffb020, 0x9b7ede, 0x3fa7d6, 0xe5534b, 0x2e8b57];
+const PANTS = [0x22303e, 0x454a55, 0x6b4a2a, 0x2a3442];
 
-const SKIN = [0xe8b98a, 0xc98d5f, 0x8a5a3b, 0xf0c8a0];
-const SHIRTS = [0x3fa7d6, 0xe5534b, 0x7a8b99, 0x9b7ede, 0xff8a5c, 0x4f9e57, 0xf2c94c, 0xc9a86a];
-const PANTS = [0x2a3442, 0x3a3f4a, 0x5a4a3a, 0x22303e];
-
-function box(w, h, d, material, x, y, z) {
-  const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), material);
-  m.position.set(x, y, z);
-  m.castShadow = true;
-  return m;
-}
-
-// Build a person. opts: { skin, shirt, pants, jacket, gang, police, hat }.
-// Returns { group, parts: { head, torso, armL, armR, legL, legR } }.
-// Limbs pivot at the shoulder/hip so the walk cycle can swing them.
 export function buildCharacterMesh(opts = {}) {
-  const rng = opts.rng;
-  const pick = (arr) => (rng ? arr[Math.floor(rng.next() * arr.length)] : arr[0]);
-  const skin = opts.skin ?? pick(SKIN);
-  const shirt = opts.shirt ?? pick(SHIRTS);
-  const pants = opts.pants ?? pick(PANTS);
+  const {
+    skin = SKINS[0],
+    shirt = SHIRTS[0],
+    pants = PANTS[0],
+    isPlayer = false,
+  } = opts;
+  const g = new THREE.Group();
 
-  const group = new THREE.Group();
-  const skinMat = mat(skin);
-  const shirtMat = mat(opts.gang ? 0xb03a2e : opts.police ? 0x22303e : shirt);
-  const pantsMat = mat(opts.police ? 0x1a2432 : pants);
-  const jacketMat = opts.jacket ? mat(opts.jacket, 0.6) : null;
+  const skinMat = new THREE.MeshLambertMaterial({ color: skin });
+  const shirtMat = new THREE.MeshLambertMaterial({ color: shirt });
+  const pantsMat = new THREE.MeshLambertMaterial({ color: pants });
 
-  // Legs (pivot groups at hip height y=0.82).
-  const legL = new THREE.Group();
-  legL.position.set(-0.11, 0.82, 0);
-  legL.add(box(0.16, 0.82, 0.18, pantsMat, 0, -0.41, 0));
-  const legR = new THREE.Group();
-  legR.position.set(0.11, 0.82, 0);
-  legR.add(box(0.16, 0.82, 0.18, pantsMat, 0, -0.41, 0));
+  // legs
+  const legGeo = new THREE.BoxGeometry(0.22, 0.8, 0.22);
+  const legL = new THREE.Mesh(legGeo, pantsMat);
+  legL.position.set(-0.14, 0.4, 0);
+  const legR = new THREE.Mesh(legGeo, pantsMat);
+  legR.position.set(0.14, 0.4, 0);
+  legL.castShadow = true;
+  legR.castShadow = true;
+  g.add(legL, legR);
 
-  // Torso (pivot at shoulder line for a slight lean).
-  const torso = new THREE.Group();
-  torso.position.set(0, 0.82, 0);
-  torso.add(box(0.46, 0.58, 0.26, shirtMat, 0, 0.29, 0));
-  if (jacketMat) {
-    torso.add(box(0.5, 0.5, 0.3, jacketMat, 0, 0.3, 0));
+  // torso
+  const torso = new THREE.Mesh(new THREE.BoxGeometry(0.62, 0.7, 0.34), shirtMat);
+  torso.position.y = 1.15;
+  torso.castShadow = true;
+  g.add(torso);
+
+  // arms
+  const armGeo = new THREE.BoxGeometry(0.16, 0.62, 0.16);
+  const armL = new THREE.Mesh(armGeo, shirtMat);
+  armL.position.set(-0.4, 1.15, 0);
+  const armR = new THREE.Mesh(armGeo, shirtMat);
+  armR.position.set(0.4, 1.15, 0);
+  g.add(armL, armR);
+
+  // head
+  const head = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.42, 0.42), skinMat);
+  head.position.y = 1.72;
+  head.castShadow = true;
+  g.add(head);
+
+  // player gets a dark jacket + cap so Juno reads on screen
+  if (isPlayer) {
+    const jacket = new THREE.Mesh(
+      new THREE.BoxGeometry(0.66, 0.5, 0.38),
+      new THREE.MeshLambertMaterial({ color: 0x1c2733 })
+    );
+    jacket.position.y = 1.2;
+    g.add(jacket);
+    const cap = new THREE.Mesh(
+      new THREE.BoxGeometry(0.46, 0.14, 0.46),
+      new THREE.MeshLambertMaterial({ color: 0xff2d95 })
+    );
+    cap.position.y = 1.96;
+    g.add(cap);
   }
-  if (opts.police) {
-    torso.add(box(0.48, 0.08, 0.28, mat(0xd8d8d8), 0, 0.52, 0));
-  }
 
-  // Arms (pivot groups at shoulder height).
-  const armL = new THREE.Group();
-  armL.position.set(-0.29, 1.32, 0);
-  armL.add(box(0.13, 0.56, 0.15, shirtMat, 0, -0.26, 0));
-  armL.add(box(0.12, 0.16, 0.13, skinMat, 0, -0.6, 0));
-  const armR = new THREE.Group();
-  armR.position.set(0.29, 1.32, 0);
-  armR.add(box(0.13, 0.56, 0.15, shirtMat, 0, -0.26, 0));
-  armR.add(box(0.12, 0.16, 0.13, skinMat, 0, -0.6, 0));
+  g.userData.parts = { legL, legR, armL, armR, head, torso };
+  g.userData.height = PLAYER.height;
+  return g;
+}
 
-  // Head.
-  const head = new THREE.Group();
-  head.position.set(0, 1.44, 0);
-  head.add(box(0.3, 0.3, 0.28, skinMat, 0, 0.16, 0));
-  // Hair cap.
-  const hairMat = mat(opts.police ? 0x1a1a1a : 0x2a1a0e);
-  head.add(box(0.32, 0.1, 0.3, hairMat, 0, 0.32, 0));
-  head.add(box(0.32, 0.22, 0.06, hairMat, 0, 0.2, -0.13));
-  if (opts.police) {
-    // Cap brim.
-    head.add(box(0.32, 0.05, 0.34, mat(0x22303e), 0, 0.34, 0.02));
-  }
-  if (opts.gang) {
-    // Rust-red bandana.
-    head.add(box(0.32, 0.08, 0.3, mat(0xb03a2e), 0, 0.28, 0));
-  }
+// Swing limbs for a walk cycle; phase advances with distance.
+export function animateWalk(mesh, phase, speedFactor = 1) {
+  const p = mesh.userData.parts;
+  if (!p) return;
+  const swing = 0.55 * speedFactor;
+  p.legL.rotation.x = Math.sin(phase) * swing;
+  p.legR.rotation.x = -Math.sin(phase) * swing;
+  p.armL.rotation.x = -Math.sin(phase) * swing * 0.8;
+  p.armR.rotation.x = Math.sin(phase) * swing * 0.8;
+}
 
-  group.add(legL, legR, torso, armL, armR, head);
-  group.userData.height = 1.8;
-
+export function randomOutfit(rng) {
   return {
-    group,
-    parts: { head, torso, armL, armR, legL, legR },
+    skin: rng.pick(SKINS),
+    shirt: rng.pick(SHIRTS),
+    pants: rng.pick(PANTS),
   };
 }
-
-// Juno Voss, the player: teal jacket, dark hair, dark jeans.
-export function buildPlayerMesh() {
-  return buildCharacterMesh({
-    skin: 0xe8b98a, shirt: 0x2a3442, pants: 0x22303e, jacket: 0x2e7f8f,
-  });
-}
-
-export default buildCharacterMesh;

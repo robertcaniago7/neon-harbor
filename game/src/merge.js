@@ -1,95 +1,81 @@
-// BufferGeometry merge helper for the city: many static boxes/planes are merged
-// into a few big geometries so the whole city renders in well under 100 draw calls.
-// Works on non-indexed geometries with position/normal/uv + an optional color
-// attribute, and applies a 4x4 matrix to each piece before merging.
+// Neon Harbor 3D — merge.js
+// Small BufferGeometry merge helper so the city renders in few draw calls.
+// Geometries are merged per material colour; each merged mesh keeps one
+// material, so a whole district of boxes becomes a single draw call.
 
-import * as THREE from 'three';
+import * as THREE from '../vendor/three.module.min.js';
 
-// Merge an array of { geometry, matrix } pieces into one BufferGeometry.
-// Each geometry is first converted to non-indexed form, then transformed.
-export function mergePieces(pieces) {
-  const positions = [];
-  const normals = [];
-  const uvs = [];
-  const colors = [];
-  let hasColor = false;
-
-  for (const piece of pieces) {
-    let g = piece.geometry;
-    if (g.index) g = g.toNonIndexed();
-    const m = piece.matrix || new THREE.Matrix4();
-    const normalMatrix = new THREE.Matrix3().getNormalMatrix(m);
-    const pos = g.attributes.position;
-    const nor = g.attributes.normal;
-    const uv = g.attributes.uv;
-    const col = g.attributes.color;
-    if (col) hasColor = true;
-    const v = new THREE.Vector3();
-    const n = new THREE.Vector3();
-    for (let i = 0; i < pos.count; i++) {
-      v.fromBufferAttribute(pos, i).applyMatrix4(m);
-      positions.push(v.x, v.y, v.z);
-      if (nor) {
-        n.fromBufferAttribute(nor, i).applyMatrix3(normalMatrix).normalize();
-        normals.push(n.x, n.y, n.z);
-      } else {
-        normals.push(0, 1, 0);
-      }
-      if (uv) uvs.push(uv.getX(i), uv.getY(i));
-      else uvs.push(0, 0);
-      if (col) colors.push(col.getX(i), col.getY(i), col.getZ(i));
-      else colors.push(1, 1, 1);
-    }
-    if (g !== piece.geometry) g.dispose();
+export function mergeBoxes(items) {
+  // items: [{ w, h, d, x, y, z, ry?, color }]
+  const byColor = new Map();
+  for (const it of items) {
+    const key = it.color;
+    if (!byColor.has(key)) byColor.set(key, []);
+    byColor.get(key).push(it);
   }
+  const meshes = [];
+  for (const [color, list] of byColor) {
+    const geos = [];
+    for (const it of list) {
+      const g = new THREE.BoxGeometry(it.w, it.h, it.d);
+      if (it.ry) g.rotateY(it.ry);
+      g.translate(it.x, it.y, it.z);
+      geos.push(g);
+    }
+    const merged = mergeGeometries(geos);
+    const mat = new THREE.MeshLambertMaterial({ color });
+    const mesh = new THREE.Mesh(merged, mat);
+    mesh.castShadow = true;
+    mesh.receiveShadow = true;
+    meshes.push(mesh);
+  }
+  return meshes;
+}
 
+export function mergeGeometries(geos) {
+  let posCount = 0;
+  let idxCount = 0;
+  for (const g of geos) {
+    posCount += g.attributes.position.count;
+    idxCount += g.index ? g.index.count : 0;
+  }
+  const positions = new Float32Array(posCount * 3);
+  const normals = new Float32Array(posCount * 3);
+  const uvs = new Float32Array(posCount * 2);
+  const index = new Uint32Array(idxCount);
+  let pOff = 0;
+  let iOff = 0;
+  for (const g of geos) {
+    const n = g.attributes.position.count;
+    positions.set(g.attributes.position.array, pOff * 3);
+    if (g.attributes.normal) normals.set(g.attributes.normal.array, pOff * 3);
+    if (g.attributes.uv) uvs.set(g.attributes.uv.array, pOff * 2);
+    if (g.index) {
+      const arr = g.index.array;
+      for (let i = 0; i < arr.length; i++) index[iOff + i] = arr[i] + pOff;
+      iOff += arr.length;
+    }
+    pOff += n;
+  }
   const out = new THREE.BufferGeometry();
-  out.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
-  out.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3));
-  out.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
-  if (hasColor) out.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+  out.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+  out.setAttribute('normal', new THREE.BufferAttribute(normals, 3));
+  out.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
+  out.setIndex(new THREE.BufferAttribute(index, 1));
   return out;
 }
 
-// Convenience: build a transformed box piece.
-export function boxPiece(w, h, d, x, y, z, ry = 0, color = null) {
-  const g = new THREE.BoxGeometry(w, h, d);
-  if (color !== null) {
-    const c = new THREE.Color(color);
-    const count = g.attributes.position.count;
-    const arr = new Float32Array(count * 3);
-    for (let i = 0; i < count; i++) {
-      arr[i * 3] = c.r;
-      arr[i * 3 + 1] = c.g;
-      arr[i * 3 + 2] = c.b;
-    }
-    g.setAttribute('color', new THREE.BufferAttribute(arr, 3));
+// Merge a list of already-built meshes (same material) into one mesh.
+export function mergeMeshes(meshes, material) {
+  const geos = [];
+  for (const m of meshes) {
+    const g = m.geometry.clone();
+    g.applyMatrix4(m.matrixWorld);
+    geos.push(g);
   }
-  const m = new THREE.Matrix4();
-  const q = new THREE.Quaternion().setFromEuler(new THREE.Euler(0, ry, 0));
-  m.compose(new THREE.Vector3(x, y, z), q, new THREE.Vector3(1, 1, 1));
-  return { geometry: g, matrix: m };
+  const merged = mergeGeometries(geos);
+  const mesh = new THREE.Mesh(merged, material);
+  mesh.castShadow = true;
+  mesh.receiveShadow = true;
+  return mesh;
 }
-
-// Convenience: build a transformed plane piece (facing up by default).
-export function planePiece(w, d, x, y, z, ry = 0, color = null) {
-  const g = new THREE.PlaneGeometry(w, d);
-  g.rotateX(-Math.PI / 2);
-  if (color !== null) {
-    const c = new THREE.Color(color);
-    const count = g.attributes.position.count;
-    const arr = new Float32Array(count * 3);
-    for (let i = 0; i < count; i++) {
-      arr[i * 3] = c.r;
-      arr[i * 3 + 1] = c.g;
-      arr[i * 3 + 2] = c.b;
-    }
-    g.setAttribute('color', new THREE.BufferAttribute(arr, 3));
-  }
-  const m = new THREE.Matrix4();
-  const q = new THREE.Quaternion().setFromEuler(new THREE.Euler(0, ry, 0));
-  m.compose(new THREE.Vector3(x, y, z), q, new THREE.Vector3(1, 1, 1));
-  return { geometry: g, matrix: m };
-}
-
-export default mergePieces;

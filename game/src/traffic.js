@@ -1,185 +1,114 @@
-// Traffic: parked cars (stealable) and moving traffic on the road graph.
-// All kinematic — they follow waypoints, no physics bodies. Each car is a
-// mesh from vehicle3d.js plus a small state record.
+// Neon Harbor 3D — traffic.js
+// Parked cars + moving traffic on the road graph. Traffic cars are kinematic
+// waypoint followers: they cruise along roads, slow for corners, and wrap
+// around the city. Parked cars are stealable (the player takes the nearest).
 
-import * as THREE from 'three';
-import { CONFIG } from './config.js';
+import * as THREE from '../vendor/three.module.min.js';
+import { ROADS_X, ROADS_Z, CAR_MODELS, COUNTS } from './config.js';
+import { makeRng } from './random.js';
 import { buildCarMesh } from './vehicle3d.js';
 
-// Pick a car model by its commonness weight.
-function pickModel(rng) {
-  const models = CONFIG.carModels;
-  let total = 0;
-  for (const m of models) total += m.common;
-  let r = rng.next() * total;
-  for (const m of models) {
-    if (r < m.common) return m;
-    r -= m.common;
-  }
-  return models[0];
-}
-
-// A spot on a road: which road, which lane, how far along it.
-function roadSpot(rng, roadGraph) {
-  const nodeId = roadGraph.randomNode(rng);
-  const node = roadGraph.nodes[nodeId];
-  const nbrs = roadGraph.adjacency[nodeId];
-  const nextId = nbrs[Math.floor(rng.next() * nbrs.length)];
-  return { nodeId, nextId, t: rng.next() };
-}
-
-export function createTraffic(scene, roadGraph, rng, quality) {
-  const count = quality.traffic;
-  const parkedCount = CONFIG.counts.parked;
-  const moving = [];
-  const parked = [];
-
-  function placeOnRoad(mesh, nodeId, nextId, t) {
-    const a = roadGraph.nodes[nodeId];
-    const b = roadGraph.nodes[nextId];
-    const x = a.x + (b.x - a.x) * t;
-    const z = a.z + (b.z - a.z) * t;
-    // Offset into the right-hand lane.
-    const dx = b.x - a.x;
-    const dz = b.z - a.z;
-    const len = Math.hypot(dx, dz) || 1;
-    const nx = -dz / len;
-    const nz = dx / len;
-    mesh.position.set(x + nx * CONFIG.laneOffset, 0, z + nz * CONFIG.laneOffset);
-    mesh.rotation.y = Math.atan2(dx, dz);
-    return { x: mesh.position.x, z: mesh.position.z, heading: mesh.rotation.y };
-  }
-
-  // Moving traffic cars.
-  for (let i = 0; i < count; i++) {
-    const model = pickModel(rng);
-    const { group } = buildCarMesh(model);
-    scene.add(group);
-    const spot = roadSpot(rng, roadGraph);
-    const pos = placeOnRoad(group, spot.nodeId, spot.nextId, spot.t);
-    moving.push({
-      mesh: group,
-      model,
-      nodeId: spot.nodeId,
-      nextId: spot.nextId,
-      speed: rng.range(7, 11) * model.speed,
-      x: pos.x,
-      z: pos.z,
-      heading: pos.heading,
-      stopped: 0,
-    });
-  }
-
-  // Parked cars along road edges (stealable with F). We spawn one fewer
-  // than the total here: the special Harbor Coupe (placed by the world for
-  // mission 2) is the tenth parked car, so the total stays at 10.
-  for (let i = 0; i < parkedCount - 1; i++) {
-    const model = pickModel(rng);
-    const { group } = buildCarMesh(model);
-    scene.add(group);
-    const spot = roadSpot(rng, roadGraph);
-    const a = roadGraph.nodes[spot.nodeId];
-    const b = roadGraph.nodes[spot.nextId];
-    const dx = b.x - a.x;
-    const dz = b.z - a.z;
-    const len = Math.hypot(dx, dz) || 1;
-    const nx = -dz / len;
-    const nz = dx / len;
-    // Parked on the far edge of the road, facing along it.
-    const side = rng.chance(0.5) ? 1 : -1;
-    const x = a.x + (b.x - a.x) * spot.t + nx * CONFIG.laneOffset * 2 * side;
-    const z = a.z + (b.z - a.z) * spot.t + nz * CONFIG.laneOffset * 2 * side;
-    group.position.set(x, 0, z);
-    group.rotation.y = Math.atan2(dx, dz) + (side < 0 ? Math.PI : 0);
-    parked.push({
-      mesh: group,
-      model,
-      x, z,
-      heading: group.rotation.y,
-      taken: false,
-    });
-  }
-
-  // The Harbor Coupe for mission 2 sits at a fixed dock spot.
-  function placeSpecial(model, x, z, heading) {
-    const { group } = buildCarMesh(model);
-    scene.add(group);
-    group.position.set(x, 0, z);
-    group.rotation.y = heading;
-    const rec = { mesh: group, model, x, z, heading, taken: false, special: true };
-    parked.push(rec);
-    return rec;
-  }
-
-  function update(dt, playerPos) {
-    for (const car of moving) {
-      // Brief random stops (traffic lights / congestion feel).
-      if (car.stopped > 0) {
-        car.stopped -= dt;
-        continue;
-      }
-      if (rng.next() < 0.0015) {
-        car.stopped = rng.range(1, 3);
-        continue;
-      }
-      const target = roadGraph.nodes[car.nextId];
-      const dx = target.x - car.x;
-      const dz = target.z - car.z;
-      const dist = Math.hypot(dx, dz);
-      const step = car.speed * dt;
-      if (dist <= step + 0.5) {
-        // Arrive: pick the next node (not the one we came from, if possible).
-        const nbrs = roadGraph.adjacency[car.nextId].filter((n) => n !== car.nodeId);
-        const pick = nbrs.length > 0
-          ? nbrs[Math.floor(rng.next() * nbrs.length)]
-          : roadGraph.adjacency[car.nextId][0];
-        car.nodeId = car.nextId;
-        car.nextId = pick;
-        car.x = target.x;
-        car.z = target.z;
-      } else {
-        car.x += (dx / dist) * step;
-        car.z += (dz / dist) * step;
-      }
-      // Recompute heading + lane offset for the current leg.
-      const a = roadGraph.nodes[car.nodeId];
-      const b = roadGraph.nodes[car.nextId];
-      const ldx = b.x - a.x;
-      const ldz = b.z - a.z;
-      const llen = Math.hypot(ldx, ldz) || 1;
-      const nx = -ldz / llen;
-      const nz = ldx / llen;
-      car.heading = Math.atan2(ldx, ldz);
-      car.mesh.position.set(car.x + nx * CONFIG.laneOffset, 0, car.z + nz * CONFIG.laneOffset);
-      car.mesh.rotation.y = car.heading;
-      // Spin wheels.
-      const wheels = car.mesh.userData.wheels;
-      if (wheels) {
-        const w = car.speed * dt / 0.36;
-        wheels.forEach((wh) => { wh.rotation.x += w; });
-      }
+function roadPoints() {
+  // Every intersection of a road X and a road Z.
+  const pts = [];
+  for (const x of ROADS_X) {
+    for (const z of ROADS_Z) {
+      pts.push({ x, z });
     }
   }
+  return pts;
+}
 
-  // Nearest parked (not taken) car within `range` of a point.
-  function nearestParked(x, z, range) {
+export function createTraffic(scene) {
+  const rng = makeRng(4242);
+  const group = new THREE.Group();
+  group.name = 'traffic';
+  scene.add(group);
+
+  // --- parked cars (10): along road edges, fixed spots ---
+  const parked = [];
+  const parkedSpots = [];
+  for (let i = 0; i < COUNTS.parkedCars; i++) {
+    const onXRoad = i % 2 === 0;
+    const road = onXRoad ? ROADS_X[i % ROADS_X.length] : ROADS_Z[i % ROADS_Z.length];
+    const along = -150 + i * 30;
+    const x = onXRoad ? road + 3.4 : along;
+    const z = onXRoad ? along : road + 3.4;
+    const yaw = onXRoad ? 0 : Math.PI / 2;
+    parkedSpots.push({ x, z, yaw });
+  }
+  // the special Harbor Coupe for mission 2 sits near the garage
+  parkedSpots[2] = { x: 78, z: 28, yaw: Math.PI / 2 };
+
+  const modelBag = [];
+  for (const m of CAR_MODELS) {
+    for (let i = 0; i < m.common; i++) modelBag.push(m);
+  }
+  for (let i = 0; i < COUNTS.parkedCars; i++) {
+    const model = i === 2 ? CAR_MODELS[2] : modelBag[rng.int(0, modelBag.length - 1)];
+    const mesh = buildCarMesh(model);
+    const spot = parkedSpots[i];
+    mesh.position.set(spot.x, 0, spot.z);
+    mesh.rotation.y = spot.yaw;
+    group.add(mesh);
+    parked.push({ mesh, model, x: spot.x, z: spot.z, yaw: spot.yaw, taken: false, special: i === 2 });
+  }
+
+  // --- moving traffic (16): loop around the road graph ---
+  const moving = [];
+  const intersections = roadPoints();
+  for (let i = 0; i < COUNTS.trafficCars; i++) {
+    const model = modelBag[rng.int(0, modelBag.length - 1)];
+    const mesh = buildCarMesh(model);
+    group.add(mesh);
+    const start = intersections[rng.int(0, intersections.length - 1)];
+    const speed = rng.range(7, 12) * model.speed;
+    moving.push({
+      mesh, model, speed,
+      x: start.x, z: start.z,
+      dir: rng.pick([{ x: 1, z: 0 }, { x: -1, z: 0 }, { x: 0, z: 1 }, { x: 0, z: -1 }]),
+      yaw: 0,
+      wait: 0,
+    });
+  }
+
+  function nearestParked(x, z, maxDist) {
     let best = null;
-    let bestD = range * range;
-    for (const car of parked) {
-      if (car.taken) continue;
-      const d = (car.x - x) * (car.x - x) + (car.z - z) * (car.z - z);
-      if (d < bestD) {
-        bestD = d;
-        best = car;
-      }
+    let bestD = maxDist;
+    for (const p of parked) {
+      if (p.taken) continue;
+      const d = Math.hypot(p.x - x, p.z - z);
+      if (d < bestD) { bestD = d; best = p; }
     }
     return best;
   }
 
-  return {
-    moving, parked, update, nearestParked, placeSpecial,
-    get parkedCount() { return parked.filter((c) => !c.taken).length; },
-  };
-}
+  function update(dt, playerPos) {
+    for (const car of moving) {
+      if (car.wait > 0) { car.wait -= dt; continue; }
+      car.x += car.dir.x * car.speed * dt;
+      car.z += car.dir.z * car.speed * dt;
+      // turn at intersections, otherwise wrap at the city edge
+      const onRoadX = ROADS_X.some((rx) => Math.abs(car.x - rx) < 1.2);
+      const onRoadZ = ROADS_Z.some((rz) => Math.abs(car.z - rz) < 1.2);
+      if (onRoadX && onRoadZ && rng.chance(dt * 0.25)) {
+        const dirs = [{ x: 1, z: 0 }, { x: -1, z: 0 }, { x: 0, z: 1 }, { x: 0, z: -1 }];
+        car.dir = dirs[rng.int(0, 3)];
+      }
+      if (car.x > 232 || car.x < -232 || car.z > 182 || car.z < -182) {
+        car.x = THREE.MathUtils.clamp(car.x, -225, 225);
+        car.z = THREE.MathUtils.clamp(car.z, -175, 175);
+        car.dir = { x: -car.dir.x, z: -car.dir.z };
+      }
+      car.yaw = Math.atan2(car.dir.x, car.dir.z);
+      car.mesh.position.set(car.x, 0, car.z);
+      car.mesh.rotation.y = car.yaw;
+      // don't run the player over: pause if very close
+      if (playerPos && Math.hypot(car.x - playerPos.x, car.z - playerPos.z) < 6) {
+        car.wait = 0.6;
+      }
+    }
+  }
 
-export default createTraffic;
+  return { group, parked, moving, nearestParked, update };
+}

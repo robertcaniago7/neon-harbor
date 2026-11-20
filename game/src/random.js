@@ -1,9 +1,9 @@
-// Seeded RNG (mulberry32) so screenshot staging is reproducible.
-// Every random choice in the city build flows through one of these helpers.
+// Neon Harbor 3D — random.js
+// Seeded RNG (mulberry32) so screenshots and city layout are reproducible.
 
 export function mulberry32(seed) {
   let a = seed >>> 0;
-  return function () {
+  return function next() {
     a |= 0;
     a = (a + 0x6d2b79f5) | 0;
     let t = Math.imul(a ^ (a >>> 15), 1 | a);
@@ -12,45 +12,34 @@ export function mulberry32(seed) {
   };
 }
 
-// Small wrapper object so callers can keep one rng and use named helpers.
-export function createRng(seed) {
-  const next = mulberry32(seed);
+export function makeRng(seed) {
+  const rand = mulberry32(seed);
   return {
-    next,
-    // float in [min, max)
+    next: rand,
     range(min, max) {
-      return min + next() * (max - min);
+      return min + rand() * (max - min);
     },
-    // integer in [min, max] inclusive
     int(min, max) {
-      return Math.floor(min + next() * (max - min + 1));
+      return Math.floor(min + rand() * (max - min + 1));
     },
-    // pick one element of an array
-    pick(arr) {
-      return arr[Math.floor(next() * arr.length)];
+    pick(list) {
+      return list[Math.floor(rand() * list.length)];
     },
-    // weighted pick: entries are {value, weight} or [value, weight]
-    weighted(entries) {
-      let total = 0;
-      for (const e of entries) total += e.weight ?? e[1];
-      let r = next() * total;
-      for (const e of entries) {
-        const w = e.weight ?? e[1];
-        if (r < w) return e.value ?? e[0];
-        r -= w;
-      }
-      const last = entries[entries.length - 1];
-      return last.value ?? last[0];
-    },
-    // true with probability p
     chance(p) {
-      return next() < p;
+      return rand() < p;
     },
-    // random sign
     sign() {
-      return next() < 0.5 ? -1 : 1;
+      return rand() < 0.5 ? -1 : 1;
     },
   };
 }
 
-export default createRng;
+// A deterministic hash of a string, for per-block seeds.
+export function hashSeed(str) {
+  let h = 2166136261;
+  for (let i = 0; i < str.length; i++) {
+    h ^= str.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return h >>> 0;
+}

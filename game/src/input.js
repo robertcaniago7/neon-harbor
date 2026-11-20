@@ -1,35 +1,32 @@
-// Input: keyboard, mouse drag-look + click-shoot, touch joystick (nipplejs)
-// and on-screen buttons. One shared state object the world reads each frame.
+// Neon Harbor 3D — input.js
+// Keyboard, mouse, touch joystick (nipplejs, ES module via import map) and
+// on-screen buttons. Produces one clean state object per frame.
 
-import nipplejs from 'nipplejs';
+import * as nipplejs from '../vendor/nipplejs.min.js';
 
-export function createInput(canvas, opts = {}) {
-  const keys = {};
+export function createInput(canvas) {
+  const keys = new Set();
   const state = {
-    keys,
-    // movement axes in [-1, 1]: x = strafe/right, y = forward
-    moveX: 0,
-    moveY: 0,
-    // camera look deltas accumulated this frame (consumed by world)
+    forward: 0,
+    strafe: 0,
+    steer: 0,
+    throttle: 0,
+    brake: false,
+    sprint: false,
+    punch: false,
+    shoot: false,
+    shootHeld: false,
+    enterCar: false,
+    startJob: false,
+    pause: false,
+    mute: false,
+    weaponSlot: 0,
     lookDX: 0,
     lookDY: 0,
-    // mouse held for aiming/shooting
-    mouseDown: false,
-    // touch joystick vector
     joyX: 0,
     joyY: 0,
-    // edge-triggered actions (world consumes and clears them)
-    pressed: {},
-    sprint: false,
-    brake: false,
+    joyActive: false,
   };
-
-  const onAction = opts.onAction || (() => {});
-
-  function press(action) {
-    state.pressed[action] = true;
-    onAction(action);
-  }
 
   const keyMap = {
     KeyW: 'up', ArrowUp: 'up',
@@ -40,161 +37,121 @@ export function createInput(canvas, opts = {}) {
     Space: 'brake',
     KeyF: 'enterCar',
     KeyE: 'punch',
-    Enter: 'job',
-    Digit1: 'weapon1',
-    Digit2: 'weapon2',
-    KeyP: 'pause',
-    Escape: 'pause',
+    Enter: 'startJob',
+    KeyP: 'pause', Escape: 'pause',
     KeyM: 'mute',
+    Digit1: 'slot1', Digit2: 'slot2',
   };
 
-  function onKeyDown(e) {
+  let mouseDown = false;
+  let lastMouseX = 0;
+  let lastMouseY = 0;
+
+  window.addEventListener('keydown', (e) => {
     const action = keyMap[e.code];
     if (!action) return;
-    if (e.code === 'Space') e.preventDefault();
-    if (!keys[action]) press(action);
-    keys[action] = true;
-    if (action === 'sprint') state.sprint = true;
-    if (action === 'brake') state.brake = true;
-  }
-
-  function onKeyUp(e) {
+    if (['up', 'down', 'left', 'right', 'brake'].includes(action)) e.preventDefault();
+    if (e.repeat) return;
+    keys.add(action);
+    if (action === 'enterCar') state.enterCar = true;
+    if (action === 'punch') state.punch = true;
+    if (action === 'startJob') state.startJob = true;
+    if (action === 'pause') state.pause = true;
+    if (action === 'mute') state.mute = true;
+    if (action === 'slot1') state.weaponSlot = 0;
+    if (action === 'slot2') state.weaponSlot = 1;
+  });
+  window.addEventListener('keyup', (e) => {
     const action = keyMap[e.code];
-    if (!action) return;
-    keys[action] = false;
-    if (action === 'sprint') state.sprint = false;
-    if (action === 'brake') state.brake = false;
-  }
+    if (action) keys.delete(action);
+  });
+  window.addEventListener('blur', () => keys.clear());
 
-  // Mouse drag looks around; holding the button aims/shoots.
-  let dragging = false;
-  let lastX = 0;
-  let lastY = 0;
+  canvas.addEventListener('mousedown', (e) => {
+    mouseDown = true;
+    lastMouseX = e.clientX;
+    lastMouseY = e.clientY;
+    state.shootHeld = true;
+  });
+  window.addEventListener('mouseup', () => {
+    mouseDown = false;
+    state.shootHeld = false;
+  });
+  window.addEventListener('mousemove', (e) => {
+    if (!mouseDown) return;
+    state.lookDX += e.clientX - lastMouseX;
+    state.lookDY += e.clientY - lastMouseY;
+    lastMouseX = e.clientX;
+    lastMouseY = e.clientY;
+  });
 
-  function onMouseDown(e) {
-    if (e.button !== 0) return;
-    dragging = true;
-    state.mouseDown = true;
-    lastX = e.clientX;
-    lastY = e.clientY;
-    press('shoot');
-  }
-
-  function onMouseMove(e) {
-    if (!dragging) return;
-    state.lookDX += e.clientX - lastX;
-    state.lookDY += e.clientY - lastY;
-    lastX = e.clientX;
-    lastY = e.clientY;
-  }
-
-  function onMouseUp(e) {
-    if (e.button !== 0) return;
-    dragging = false;
-    state.mouseDown = false;
-  }
-
-  window.addEventListener('keydown', onKeyDown);
-  window.addEventListener('keyup', onKeyUp);
-  canvas.addEventListener('mousedown', onMouseDown);
-  window.addEventListener('mousemove', onMouseMove);
-  window.addEventListener('mouseup', onMouseUp);
-  canvas.addEventListener('contextmenu', (e) => e.preventDefault());
-
-  // Touch joystick (nipplejs module) + buttons, if the DOM exists.
-  let joystick = null;
-  const joyZone = document.getElementById('joystick-zone');
-  if (joyZone && nipplejs && typeof nipplejs.create === 'function') {
-    joystick = nipplejs.create({
-      zone: joyZone,
+  // --- touch joystick ---
+  const zone = document.getElementById('joystick-zone');
+  let stick = null;
+  if (zone && typeof nipplejs.create === 'function') {
+    stick = nipplejs.create({
+      zone,
       mode: 'static',
       position: { left: '70px', bottom: '70px' },
       color: 'white',
       size: 110,
     });
-    joystick.on('move', (evt, data) => {
+    stick.on('move', (evt, data) => {
       if (!data || !data.vector) return;
       state.joyX = data.vector.x;
       state.joyY = data.vector.y;
+      state.joyActive = true;
     });
-    joystick.on('end', () => {
+    stick.on('end', () => {
       state.joyX = 0;
       state.joyY = 0;
+      state.joyActive = false;
     });
   }
 
-  // On-screen buttons: data-action attributes.
-  const buttons = document.querySelectorAll('[data-action]');
-  buttons.forEach((btn) => {
-    const action = btn.getAttribute('data-action');
-    btn.addEventListener('touchstart', (e) => {
-      e.preventDefault();
-      if (action === 'shoot') state.mouseDown = true;
-      press(action);
-    }, { passive: false });
-    btn.addEventListener('touchend', (e) => {
-      e.preventDefault();
-      if (action === 'shoot') state.mouseDown = false;
-    }, { passive: false });
-    btn.addEventListener('mousedown', (e) => {
-      e.preventDefault();
-      if (action === 'shoot') state.mouseDown = true;
-      press(action);
-    });
-    btn.addEventListener('mouseup', () => {
-      if (action === 'shoot') state.mouseDown = false;
-    });
-  });
+  // --- touch buttons ---
+  const bindButton = (id, onDown, onUp) => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.addEventListener('touchstart', (e) => { e.preventDefault(); onDown(); }, { passive: false });
+    el.addEventListener('touchend', (e) => { e.preventDefault(); if (onUp) onUp(); }, { passive: false });
+    el.addEventListener('mousedown', (e) => { e.preventDefault(); onDown(); });
+    el.addEventListener('mouseup', () => { if (onUp) onUp(); });
+  };
+  bindButton('btn-shoot', () => { state.shoot = true; state.shootHeld = true; }, () => { state.shootHeld = false; });
+  bindButton('btn-car', () => { state.enterCar = true; });
+  bindButton('btn-hit', () => { state.punch = true; });
+  bindButton('btn-job', () => { state.startJob = true; });
 
-  // Recompute movement axes from keys + joystick each time the world asks.
   function poll() {
-    let x = 0;
-    let y = 0;
-    if (keys.left) x -= 1;
-    if (keys.right) x += 1;
-    if (keys.up) y += 1;
-    if (keys.down) y -= 1;
-    if (state.joyX !== 0 || state.joyY !== 0) {
-      x += state.joyX;
-      y += state.joyY;
+    const up = keys.has('up') ? 1 : 0;
+    const down = keys.has('down') ? 1 : 0;
+    const left = keys.has('left') ? 1 : 0;
+    const right = keys.has('right') ? 1 : 0;
+    let fwd = up - down;
+    let str = right - left;
+    if (state.joyActive) {
+      fwd = state.joyY;
+      str = state.joyX;
     }
-    const len = Math.hypot(x, y);
-    if (len > 1) {
-      x /= len;
-      y /= len;
-    }
-    state.moveX = x;
-    state.moveY = y;
-    return state;
-  }
-
-  // Consume an edge-triggered action (returns true once per press).
-  function consume(action) {
-    if (state.pressed[action]) {
-      state.pressed[action] = false;
-      return true;
-    }
-    return false;
-  }
-
-  function consumeLook() {
-    const dx = state.lookDX;
-    const dy = state.lookDY;
+    state.forward = fwd;
+    state.strafe = str;
+    state.steer = -str;
+    state.throttle = fwd;
+    state.brake = keys.has('brake');
+    state.sprint = keys.has('sprint');
+    // consume one-shot flags after the frame reads them
+    const snapshot = { ...state };
+    state.enterCar = false;
+    state.punch = false;
+    state.startJob = false;
+    state.pause = false;
+    state.mute = false;
+    state.shoot = false;
     state.lookDX = 0;
     state.lookDY = 0;
-    return { dx, dy };
+    return snapshot;
   }
 
-  function dispose() {
-    window.removeEventListener('keydown', onKeyDown);
-    window.removeEventListener('keyup', onKeyUp);
-    canvas.removeEventListener('mousedown', onMouseDown);
-    window.removeEventListener('mousemove', onMouseMove);
-    window.removeEventListener('mouseup', onMouseUp);
-    if (joystick) joystick.destroy();
-  }
-
-  return { state, poll, consume, consumeLook, dispose };
+  return { state, poll };
 }
-
-export default createInput;
