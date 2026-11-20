@@ -1,8 +1,8 @@
 # Neon Harbor 3D
 
-[![make.fun](https://make.fun/badge/gta6-01)](https://make.fun)
-[![gta6-01](https://make.fun/badge/gta6-01/entry)](https://make.fun)
-[![play](https://make.fun/badge/gta6-01/play)](https://make.fun)
+[![make.fun](https://make.fun/badge/gta6-01.svg)](https://make.fun/bounty/gta6-01)
+[![rank](https://make.fun/badge/gta6-01/robertcaniago7/neon-harbor/rank.svg)](https://make.fun/bounty/gta6-01)
+[![reward](https://make.fun/badge/gta6-01/robertcaniago7/neon-harbor/reward.svg)](https://make.fun/bounty/gta6-01)
 
 An original 3D open-world crime game for the make.fun **"Make GTA 6"** bounty
 (gta6-01). No Rockstar names, maps, characters, or assets — every street,
